@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="glass rounded-md p-5">
+  <div class="mb-5 flex items-center justify-between">
+    <h1 class="text-2xl font-semibold">维度定义</h1>
+    <form method="post" action="/admin/dimensions/reseed"><button class="rounded bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950">从种子重置</button></form>
+  </div>
+  <div class="space-y-4">
+    {% for group in dimensions %}
+      <div class="panel rounded-md p-4">
+        <h2 class="font-semibold">{{ group.label }}</h2>
+        <div class="mt-3 grid gap-3 md:grid-cols-2">
+          {% for dim in group.dimensions %}
+            <div class="rounded border border-slate-800 bg-slate-950/50 p-3">
+              <div class="font-medium">{{ dim.label }}</div>
+              <div class="mt-1 text-xs text-slate-500">{{ dim.key }}</div>
+              <p class="mt-2 text-sm text-slate-400">{{ dim.description }}</p>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
+

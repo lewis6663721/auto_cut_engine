@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-md glass rounded-md p-6">
+  <h1 class="text-xl font-semibold">{{ "注册" if mode == "register" else "登录" }}</h1>
+  <form method="post" action="{{ '/register' if mode == 'register' else '/login' }}" class="mt-5 space-y-4">
+    <input type="hidden" name="next_url" value="{{ next_url or '/' }}">
+    <label class="grid gap-1 text-sm text-slate-300">账号
+      <input name="username" required class="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100">
+    </label>
+    <label class="grid gap-1 text-sm text-slate-300">密码
+      <input name="password" type="password" required class="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100">
+    </label>
+    <button class="w-full rounded bg-cyan-400 px-4 py-2 font-semibold text-slate-950">{{ "创建账号" if mode == "register" else "进入工作台" }}</button>
+  </form>
+  <p class="mt-4 text-sm text-slate-400">
+    {% if mode == "register" %}<a class="text-cyan-300" href="/login?{{ next_query }}">已有账号，去登录</a>{% else %}<a class="text-cyan-300" href="/register?{{ next_query }}">注册新账号</a>{% endif %}
+  </p>
+</section>
+{% endblock %}

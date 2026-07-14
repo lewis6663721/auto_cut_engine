@@ -1,0 +1,47 @@
+{% macro dimension_panel(dimensions, config) %}
+  <div class="space-y-6">
+    {% for group in dimensions %}
+      <section class="rounded-2xl border border-slate-800/90 bg-slate-950/38 p-6">
+        <div class="mb-5 flex items-center gap-3 text-xl font-black text-slate-200">
+          <i data-lucide="{{ group.icon or 'sliders-horizontal' }}" class="h-5 w-5 text-cyan-300"></i>
+          {{ group.label }}
+        </div>
+        <div class="grid gap-4 lg:grid-cols-2">
+          {% for dim in group.dimensions %}
+            {% set item = config.get(dim.key, {}) %}
+            {% set params = item.get("params", {}) %}
+            <div class="rounded-xl border border-slate-800 bg-[#090a12]/80 p-5">
+              <label class="flex items-start gap-4">
+                <input type="checkbox" name="dim_{{ dim.key }}_enabled" class="mt-1 h-5 w-5 accent-cyan-400" {% if item.get("enabled") %}checked{% endif %}>
+                <span>
+                  <span class="flex items-center gap-2 text-lg font-black text-slate-100">
+                    <i data-lucide="{{ dim.icon or 'settings-2' }}" class="h-4 w-4 text-slate-500"></i>{{ dim.label }}
+                  </span>
+                  <span class="mt-2 block text-sm font-semibold leading-6 text-slate-600">{{ dim.description }}</span>
+                </span>
+              </label>
+              <div class="mt-5 grid gap-3">
+                {% for name, schema in dim.params_schema.items() %}
+                  <label class="grid gap-2 text-sm font-bold text-slate-500">
+                    <span>{{ schema.label }}</span>
+                    {% if schema.type == "range" %}
+                      <input type="range" name="dim_{{ dim.key }}_{{ name }}" min="{{ schema.min }}" max="{{ schema.max }}" step="{{ schema.step }}" value="{{ params.get(name, schema.default) }}" class="accent-cyan-400">
+                    {% elif schema.type == "select" %}
+                      <select name="dim_{{ dim.key }}_{{ name }}" class="rounded-lg border border-slate-800 bg-slate-950 px-3 py-3 text-slate-200">
+                        {% for option in schema.options %}
+                          <option value="{{ option }}" {% if params.get(name, schema.default) == option %}selected{% endif %}>{{ option or "默认" }}</option>
+                        {% endfor %}
+                      </select>
+                    {% else %}
+                      <input name="dim_{{ dim.key }}_{{ name }}" value="{{ params.get(name, schema.default) }}" class="rounded-lg border border-slate-800 bg-slate-950 px-3 py-3 text-slate-200">
+                    {% endif %}
+                  </label>
+                {% endfor %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+  </div>
+{% endmacro %}

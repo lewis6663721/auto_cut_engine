@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="grid gap-6 lg:grid-cols-[420px_1fr]">
+  <aside class="soft-card p-6">
+    <a href="/creative" class="text-sm font-bold text-slate-600 hover:text-slate-300">← 返回创意坊</a>
+    <h1 class="mt-5 text-3xl font-black text-white">{{ work.title }}</h1>
+    <p class="mt-4 text-base font-semibold leading-8 text-slate-500">{{ work.description }}</p>
+    {% if work.result_video_url %}
+      <div class="media-frame mt-6"><video controls src="{{ work.result_video_url }}"></video></div>
+    {% endif %}
+    <div class="mt-5 flex flex-wrap gap-2">
+      {% for tag in work.tags %}
+        <span class="tag-pill">{{ tag }}</span>
+      {% endfor %}
+    </div>
+  </aside>
+
+  <section class="space-y-6">
+    <div class="soft-card p-6">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 class="text-2xl font-black text-white">AI 结构化结果</h2>
+          <p class="mt-2 text-sm font-semibold text-slate-600">这些字段会作为后续生成模板、推荐模板和训练专家经验库的基础数据。</p>
+        </div>
+        {% if user and user.is_admin %}
+          <form method="post" action="/creative/{{ work.id }}/create-template">
+            <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">生成模板草稿</button>
+          </form>
+        {% endif %}
+      </div>
+      <div class="mt-5 grid gap-3 text-sm font-bold text-slate-300 md:grid-cols-2">
+        <div class="panel p-4">风格：{{ work.video_style or "分析中" }}</div>
+        <div class="panel p-4">类型：{{ work.content_category or "分析中" }}</div>
+        <div class="panel p-4">情绪：{{ work.mood or "分析中" }}</div>
+        <div class="panel p-4">节奏：{{ work.pacing or "分析中" }}</div>
+      </div>
+    </div>
+
+    <div class="soft-card p-6">
+      <h2 class="text-2xl font-black text-white">可复用维度配置</h2>
+      <pre class="mt-4 max-h-[520px] overflow-auto rounded-xl bg-slate-950 p-5 text-sm leading-6 text-slate-400">{{ work.parsed_config }}</pre>
+    </div>
+  </section>
+</section>
+{% endblock %}

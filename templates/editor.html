@@ -1,0 +1,4083 @@
+{% extends "base.html" %}
+{% block content %}
+{% if not project %}
+<section class="space-y-8">
+  <div class="flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <h1 class="page-title font-black text-white">剪辑台</h1>
+      <p class="mt-3 max-w-3xl text-base font-semibold text-slate-500">多轨时间线、素材库、音效库和自动化模板会在这里汇合，先把常用基础剪辑流程做扎实。</p>
+    </div>
+  </div>
+
+  <form action="/editor/project/create" method="post" enctype="multipart/form-data" class="panel grid gap-5 p-6 lg:grid-cols-[1fr_180px_1fr_140px] lg:items-end">
+    <label class="block">
+      <span class="text-sm font-black text-slate-400">工程名称</span>
+      <input name="name" class="mt-2 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 font-semibold text-slate-100 outline-none focus:border-cyan-400" value="漫剧自动剪辑工程">
+    </label>
+    <label class="block">
+      <span class="text-sm font-black text-slate-400">画布</span>
+      <select name="canvas" class="mt-2 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 font-semibold text-slate-100 outline-none focus:border-cyan-400">
+        <option value="vertical">竖屏 9:16</option>
+        <option value="horizontal">横屏 16:9</option>
+        <option value="square">方屏 1:1</option>
+      </select>
+    </label>
+    <label class="block">
+      <span class="text-sm font-black text-slate-400">初始素材</span>
+      <input name="source_media" type="file" accept="video/*,audio/*,image/*" class="mt-2 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 text-sm font-semibold text-slate-300">
+    </label>
+    <button class="gradient-action inline-flex items-center justify-center gap-2 rounded-lg px-5 py-3 text-sm font-black" type="submit">
+      <i data-lucide="plus" class="h-4 w-4"></i>新建
+    </button>
+  </form>
+
+  <div class="grid gap-4 md:grid-cols-3">
+    {% for item in projects %}
+      <a href="/editor/project/{{ item.id }}" class="soft-card block p-5 transition hover:border-cyan-400/60">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-black text-white">{{ item.name }}</h2>
+          <span class="tag-pill">{{ item.canvas_width }}x{{ item.canvas_height }}</span>
+        </div>
+        <p class="mt-4 text-sm font-semibold text-slate-500">{{ item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "" }}</p>
+      </a>
+    {% else %}
+      <div class="soft-card p-8 text-center font-semibold text-slate-500 md:col-span-3">还没有剪辑工程，先新建一个。</div>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+{% set initial_media_panel = "mine" if assets else "import" %}
+<section class="editor-workspace" data-project-id="{{ project.id }}">
+  <header class="jy-titlebar">
+    <div class="jy-window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+    <a href="/editor" class="jy-back" title="返回工程列表"><i data-lucide="chevron-left"></i></a>
+    <div class="jy-project-title">
+      <strong>{{ project.name }}</strong>
+      <span>自动剪辑工程</span>
+    </div>
+    <div class="jy-title-actions">
+      <button class="jy-icon-button" type="button" title="布局"><i data-lucide="panel-top"></i></button>
+      <button class="jy-icon-button" type="button" title="加叠加轨" id="addTrackBtn"><i data-lucide="layers"></i></button>
+      <button class="jy-icon-button" type="button" title="清理空轨道" id="cleanupTracksBtn"><i data-lucide="panel-bottom-close"></i></button>
+      <form class="jy-export-form" method="post" action="/editor/project/{{ project.id }}/render">
+        <select name="resolution" title="导出分辨率">
+          <option value="project">原画布</option>
+          <option value="1080x1920">竖屏 1080P</option>
+          <option value="720x1280">竖屏 720P</option>
+          <option value="1920x1080">横屏 1080P</option>
+          <option value="1080x1080">方形 1080P</option>
+        </select>
+        <select name="fps" title="导出帧率">
+          <option value="project">原帧率</option>
+          <option value="24">24fps</option>
+          <option value="30">30fps</option>
+          <option value="60">60fps</option>
+        </select>
+        <select name="bitrate" title="导出码率">
+          <option value="auto">自动码率</option>
+          <option value="4000k">4 Mbps</option>
+          <option value="8000k">8 Mbps</option>
+          <option value="12000k">12 Mbps</option>
+          <option value="20000k">20 Mbps</option>
+        </select>
+        <select name="format" title="导出格式">
+          <option value="mp4">MP4</option>
+          <option value="mov">MOV</option>
+        </select>
+        <button class="jy-export" type="submit"><i data-lucide="upload"></i><span>导出</span></button>
+      </form>
+    </div>
+  </header>
+
+  <div id="editorExportPanel" class="editor-export-panel" hidden>
+    <div class="editor-export-head">
+      <div>
+        <strong id="editorExportTitle">导出任务</strong>
+        <span id="editorExportStatus">等待</span>
+      </div>
+      <button id="editorExportClose" class="jy-icon-button" type="button" title="收起"><i data-lucide="x"></i></button>
+    </div>
+    <div class="editor-export-progress">
+      <div id="editorExportBar"></div>
+    </div>
+    <div class="editor-export-meta">
+      <span id="editorExportPercent">0%</span>
+      <span id="editorExportStage">等待多轨渲染</span>
+    </div>
+    <div id="editorExportActions" class="editor-export-actions" hidden>
+      <a id="editorExportPreview" href="#" target="_blank" rel="noopener"><i data-lucide="play"></i><span>预览</span></a>
+      <a id="editorExportDownload" href="#" download><i data-lucide="download"></i><span>下载</span></a>
+      <a id="editorExportDetail" href="#" target="_blank" rel="noopener"><i data-lucide="list"></i><span>详情</span></a>
+    </div>
+  </div>
+
+  <div id="editorNameDialog" class="editor-name-dialog" hidden>
+    <div class="editor-name-dialog__panel">
+      <strong id="editorNameDialogTitle">命名</strong>
+      <input id="editorNameDialogInput" type="text" autocomplete="off">
+      <div class="editor-name-dialog__actions">
+        <button id="editorNameDialogCancel" type="button"><i data-lucide="x"></i><span>取消</span></button>
+        <button id="editorNameDialogConfirm" type="button"><i data-lucide="check"></i><span>确定</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="jy-main">
+    <aside class="jy-tools">
+      {% for icon, label in [("folder-open", "素材"), ("music-2", "音频"), ("type", "文本"), ("sticker", "贴纸"), ("sparkles", "特效"), ("split-square-horizontal", "转场"), ("subtitles", "字幕"), ("wand-sparkles", "智能包装"), ("sliders-horizontal", "滤镜")] %}
+        <button class="jy-tool {% if loop.first %}is-active{% endif %}" type="button" title="{{ label }}" data-tool="{{ label }}">
+          <i data-lucide="{{ icon }}"></i><span>{{ label }}</span>
+        </button>
+      {% endfor %}
+    </aside>
+
+    <aside class="jy-media-panel">
+      <div class="jy-panel-tabs">
+        <button class="{% if initial_media_panel == 'import' %}is-active{% endif %}" type="button" data-panel-tab="import">导入</button>
+        <button class="{% if initial_media_panel == 'mine' %}is-active{% endif %}" type="button" data-panel-tab="mine">我的</button>
+        <button type="button" data-panel-tab="subtitle">字幕稿</button>
+        <button type="button" data-panel-tab="sfx">音效库</button>
+        <button type="button" data-panel-tab="sticker">贴纸</button>
+        <button type="button" data-panel-tab="effect">特效</button>
+        <button type="button" data-panel-tab="ai">AI 素材</button>
+      </div>
+      <label class="jy-import-box jy-media-pane {% if initial_media_panel == 'import' %}is-active{% endif %}" data-media-panel="import">
+        <input id="assetUpload" type="file" accept="video/*,audio/*,image/*" class="hidden">
+        <i data-lucide="plus-circle"></i>
+        <strong>导入</strong>
+        <span>视频、音频、图片，支持拖到时间线</span>
+      </label>
+      <section class="jy-subtitle-box jy-media-pane" data-media-panel="subtitle">
+        <div class="jy-section-head"><strong>批量字幕</strong><span>支持 SRT/VTT</span></div>
+        <textarea id="bulkSubtitleText" rows="4" placeholder="可粘贴 SRT/VTT 时间码字幕；普通文本则按每行连续生成"></textarea>
+        <button id="bulkSubtitleBtn" type="button">生成字幕片段</button>
+      </section>
+      <div class="jy-media-section jy-media-pane {% if initial_media_panel == 'mine' %}is-active{% endif %}" data-media-panel="mine">
+        <div class="jy-section-head"><strong>我的素材</strong><span>{{ assets|length }}</span></div>
+        <div id="assetList" class="jy-asset-grid">
+          {% for asset in assets %}
+            <div class="asset-item jy-asset-card" role="button" tabindex="0" data-asset="{{ asset|tojson|forceescape }}">
+              <button class="asset-add" type="button" title="添加到时间线"><i data-lucide="plus"></i></button>
+              <button class="asset-replace" type="button" title="替换选中片段"><i data-lucide="replace"></i></button>
+              {% if asset.deletable %}<button class="asset-delete" type="button" title="删除素材"><i data-lucide="trash-2"></i></button>{% endif %}
+              <span class="jy-asset-thumb">
+                {% if asset.preview_url %}
+                  <img src="{{ asset.preview_url }}" alt="">
+                {% else %}
+                  <i data-lucide="{% if asset.asset_type == 'audio' %}music{% elif asset.asset_type == 'image' %}image{% else %}film{% endif %}"></i>
+                {% endif %}
+              </span>
+              <span class="jy-asset-name">{{ asset.name }}</span>
+              <span class="jy-asset-type">{{ asset.asset_type }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+      <section class="jy-media-section jy-sfx-section jy-media-pane" data-media-panel="sfx">
+        <div class="jy-section-head"><strong>音效库</strong><span>{{ sfx_assets|length }}</span></div>
+        <div id="sfxList" class="jy-sfx-list">
+          {% for asset in sfx_assets %}
+            <div class="jy-sfx-card">
+              <button class="asset-item" type="button" data-asset="{{ asset|tojson|forceescape }}">
+                <span class="asset-add" title="添加到时间线"><i data-lucide="plus"></i></span>
+                {% if asset.preview_url %}<img src="{{ asset.preview_url }}" alt="">{% else %}<i data-lucide="audio-waveform"></i>{% endif %}
+                <span>{{ asset.name }}</span>
+              </button>
+              {% if asset.url %}<audio controls src="{{ asset.url }}"></audio>{% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+      <section class="jy-media-section jy-media-pane" data-media-panel="sticker">
+        <div class="jy-section-head"><strong>贴纸库</strong><span>一键加入</span></div>
+        <div class="jy-preset-grid">
+          <button class="sticker-preset" type="button" data-sticker="point"><b>重点</b><span>描边强调</span></button>
+          <button class="sticker-preset" type="button" data-sticker="boom"><b>爆点</b><span>高亮标签</span></button>
+          <button class="sticker-preset" type="button" data-sticker="question"><b>疑问</b><span>剧情悬念</span></button>
+          <button class="sticker-preset" type="button" data-sticker="warning"><b>注意</b><span>提示标记</span></button>
+          <button class="sticker-preset" type="button" data-sticker="arrow"><b>&gt;&gt;</b><span>指向箭头</span></button>
+          <button class="sticker-preset" type="button" data-sticker="cta"><b>关注</b><span>互动引导</span></button>
+        </div>
+      </section>
+      <section class="jy-media-section jy-media-pane" data-media-panel="effect">
+        <div class="jy-section-head"><strong>特效/滤镜</strong><span>作用到当前片段</span></div>
+        <div class="jy-preset-grid">
+          <button class="effect-preset" type="button" data-effect="vivid"><b>鲜明</b><span>高饱和高对比</span></button>
+          <button class="effect-preset" type="button" data-effect="cinematic"><b>电影</b><span>轻微压暗</span></button>
+          <button class="effect-preset" type="button" data-effect="warm"><b>暖色</b><span>情绪升温</span></button>
+          <button class="effect-preset" type="button" data-effect="cool"><b>冷色</b><span>紧张氛围</span></button>
+          <button class="effect-preset" type="button" data-effect="soft"><b>柔光</b><span>轻微虚化</span></button>
+          <button class="effect-preset" type="button" data-effect="impact"><b>冲击</b><span>锐化加强</span></button>
+        </div>
+      </section>
+      <section class="jy-media-section jy-media-pane" data-media-panel="transition">
+        <div class="jy-section-head"><strong>转场库</strong><span>作用到当前片段</span></div>
+        <div class="jy-preset-grid">
+          <button class="transition-preset" type="button" data-transition="fade"><b>叠化</b><span>柔和过渡</span></button>
+          <button class="transition-preset" type="button" data-transition="wipeleft"><b>左擦除</b><span>画面擦入</span></button>
+          <button class="transition-preset" type="button" data-transition="wiperight"><b>右擦除</b><span>画面擦入</span></button>
+          <button class="transition-preset" type="button" data-transition="slideleft"><b>左滑动</b><span>镜头推移</span></button>
+          <button class="transition-preset" type="button" data-transition="slideright"><b>右滑动</b><span>镜头推移</span></button>
+          <button class="transition-preset" type="button" data-transition="circleopen"><b>圆形打开</b><span>焦点揭示</span></button>
+        </div>
+      </section>
+      <section class="jy-media-section jy-media-pane" data-media-panel="ai">
+        <div class="jy-section-head"><strong>AI 素材</strong><span>待接入</span></div>
+        <div class="jy-empty-pane">
+          <i data-lucide="sparkles"></i>
+          <strong>AI 素材库待接入</strong>
+          <span>后续可接入智能生成贴纸、背景、转场素材。</span>
+        </div>
+      </section>
+    </aside>
+    <div class="jy-resize-handle" data-resize-panel="media" title="拖动调整素材区宽度"></div>
+
+    <main class="jy-player-panel">
+      <div class="jy-panel-title">
+        <span>播放器-时间线01</span>
+        <button class="jy-icon-button" type="button" title="更多"><i data-lucide="menu"></i></button>
+      </div>
+      <div id="previewPane" class="editor-preview jy-preview" style="--canvas-ratio: {{ project.canvas_width }} / {{ project.canvas_height }};">
+        <span class="text-sm font-bold text-slate-600">选择素材或时间线片段后预览</span>
+      </div>
+      <div class="jy-player-controls">
+        <span id="playerTime">00:00:00:00 / 00:00:00:00</span>
+        <button id="previewPlayBtn" class="jy-play" type="button" title="播放"><i data-lucide="play"></i></button>
+        <div class="jy-player-tools">
+          <button id="originalScaleBtn" type="button">原画</button>
+          <button id="previewFullscreenBtn" type="button" title="全屏预览"><i data-lucide="maximize"></i></button>
+          <select id="quickCanvasPreset" title="画布比例">
+            <option value="vertical">9:16</option>
+            <option value="horizontal">16:9</option>
+            <option value="square">1:1</option>
+            <option value="portrait43">3:4</option>
+            <option value="landscape43">4:3</option>
+            <option value="custom">自定义</option>
+          </select>
+        </div>
+      </div>
+    </main>
+    <div class="jy-resize-handle" data-resize-panel="inspector" title="拖动调整参数区宽度"></div>
+
+    <aside class="jy-inspector">
+      <div class="jy-panel-title">
+        <span>草稿参数</span>
+        <button class="jy-icon-button" type="button" title="收起"><i data-lucide="panel-right-close"></i></button>
+      </div>
+      <div class="jy-meta-list">
+        <div><span>草稿名称</span><strong id="projectNameSummary">{{ project.name }}</strong></div>
+        <div><span>画布</span><strong id="projectCanvasSummary">{{ project.canvas_width }} x {{ project.canvas_height }}</strong></div>
+        <div><span>帧率</span><strong id="projectFpsSummary">{{ project.fps }} fps</strong></div>
+        <div><span>当前素材</span><strong id="selectedAssetName">未选择素材</strong></div>
+        <form id="projectSettingsForm" class="jy-project-settings">
+          <label class="param-label">名称<input id="projectNameInput" type="text" value="{{ project.name }}"></label>
+          <label class="param-label">比例
+            <select id="projectCanvasPreset">
+              <option value="vertical">竖屏 9:16</option>
+              <option value="horizontal">横屏 16:9</option>
+              <option value="square">方形 1:1</option>
+              <option value="portrait43">竖屏 3:4</option>
+              <option value="landscape43">横屏 4:3</option>
+              <option value="custom">自定义</option>
+            </select>
+          </label>
+          <label class="param-label">宽<input id="projectCanvasWidth" type="number" min="320" max="4096" step="1" value="{{ project.canvas_width }}"></label>
+          <label class="param-label">高<input id="projectCanvasHeight" type="number" min="320" max="4096" step="1" value="{{ project.canvas_height }}"></label>
+          <label class="param-label">帧率<input id="projectFpsInput" type="number" min="1" max="120" step="1" value="{{ project.fps }}"></label>
+          <button class="jy-mini-save" type="submit">保存工程</button>
+        </form>
+      </div>
+      <form id="clipForm" class="jy-params">
+        <input id="clipId" type="hidden">
+        <div class="transform-toggle-row">
+          <label><input id="clipEnabled" type="checkbox" checked> 启用片段</label>
+          <label><input id="clipLocked" type="checkbox"> 锁定片段</label>
+        </div>
+        <label class="param-label">片段名称<input id="clipName" type="text" value="片段"></label>
+        <div class="jy-param-grid">
+          <label class="param-label">开始<input id="clipStart" type="number" step="0.1" min="0" value="0"></label>
+          <label class="param-label">时长<input id="clipDuration" type="number" step="0.1" min="0.2" value="5"></label>
+          <label class="param-label">素材入点<input id="clipSourceStart" type="number" step="0.1" min="0" value="0"></label>
+          <label class="param-label">适配画布
+            <select id="clipFitMode">
+              <option value="contain">适应</option>
+              <option value="cover">填充</option>
+              <option value="stretch">拉伸</option>
+            </select>
+          </label>
+          <label class="param-label">背景色<input id="clipBackgroundColor" type="text" value="#000000"></label>
+          <label class="param-label">X<input id="clipX" type="number" step="1" value="80"></label>
+          <label class="param-label">Y<input id="clipY" type="number" step="1" value="120"></label>
+          <label class="param-label">宽度<input id="clipWidth" type="number" step="1" min="40" value="420"></label>
+          <label class="param-label">层级<input id="clipZ" type="number" step="1" value="0"></label>
+          <label class="param-label">速度<input id="clipSpeed" type="number" step="0.1" min="0.2" max="5" value="1"></label>
+          <label class="param-label">变速曲线
+            <select id="clipSpeedCurve">
+              <option value="none">无</option>
+              <option value="ease_in">渐快</option>
+              <option value="ease_out">渐慢</option>
+              <option value="montage">蒙太奇</option>
+              <option value="hero">英雄时刻</option>
+            </select>
+          </label>
+          <label class="param-label">旋转<input id="clipRotation" type="number" step="1" min="-180" max="180" value="0"></label>
+        </div>
+        <div class="speed-preset-row">
+          <button class="speed-preset" type="button" data-speed-curve="ease_in">渐快</button>
+          <button class="speed-preset" type="button" data-speed-curve="ease_out">渐慢</button>
+          <button class="speed-preset" type="button" data-speed-curve="montage">蒙太奇</button>
+          <button class="speed-preset" type="button" data-speed-curve="hero">英雄时刻</button>
+        </div>
+        <div class="transform-toggle-row">
+          <label><input id="clipKeyframeEnabled" type="checkbox"> 关键帧变换</label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">结束X<input id="clipKeyframeEndX" type="number" step="1" value="80"></label>
+          <label class="param-label">结束Y<input id="clipKeyframeEndY" type="number" step="1" value="120"></label>
+          <label class="param-label">结束宽度<input id="clipKeyframeEndWidth" type="number" step="1" min="40" value="420"></label>
+        </div>
+        <div class="keyframe-action-row">
+          <button id="addKeyframeBtn" type="button">添加当前关键帧</button>
+          <button id="clearKeyframesBtn" type="button">清空关键帧</button>
+        </div>
+        <div id="keyframeList" class="keyframe-list"></div>
+        <div class="jy-param-grid">
+          <label class="param-label">边框宽度<input id="clipOverlayBorderWidth" type="number" step="1" min="0" max="40" value="0"></label>
+          <label class="param-label">边框颜色<input id="clipOverlayBorderColor" type="text" value="#ffffff"></label>
+          <label class="param-label">阴影强度<input id="clipOverlayShadow" type="number" step="0.05" min="0" max="1" value="0"></label>
+          <label class="param-label">混合模式
+            <select id="clipOverlayBlendMode">
+              <option value="normal">正常</option>
+              <option value="screen">滤色</option>
+              <option value="multiply">正片叠底</option>
+              <option value="lighten">变亮</option>
+              <option value="darken">变暗</option>
+              <option value="addition">线性减淡</option>
+              <option value="overlay">叠加</option>
+              <option value="softlight">柔光</option>
+            </select>
+          </label>
+        </div>
+        <div class="transform-toggle-row">
+          <label><input id="clipFlipX" type="checkbox"> 水平翻转</label>
+          <label><input id="clipFlipY" type="checkbox"> 垂直翻转</label>
+          <label><input id="clipReverse" type="checkbox"> 倒放</label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">裁剪左<input id="clipCropLeft" type="number" step="0.01" min="0" max="0.45" value="0"></label>
+          <label class="param-label">裁剪右<input id="clipCropRight" type="number" step="0.01" min="0" max="0.45" value="0"></label>
+          <label class="param-label">裁剪上<input id="clipCropTop" type="number" step="0.01" min="0" max="0.45" value="0"></label>
+          <label class="param-label">裁剪下<input id="clipCropBottom" type="number" step="0.01" min="0" max="0.45" value="0"></label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">运镜
+            <select id="clipMotionPreset">
+              <option value="none">无</option>
+              <option value="push_in">缓慢推近</option>
+              <option value="pull_out">缓慢拉远</option>
+              <option value="pan_left">向左平移</option>
+              <option value="pan_right">向右平移</option>
+              <option value="pan_up">向上平移</option>
+              <option value="pan_down">向下平移</option>
+            </select>
+          </label>
+          <label class="param-label">运镜强度<input id="clipMotionIntensity" type="number" step="0.01" min="0" max="0.4" value="0.08"></label>
+          <label class="param-label">蒙版
+            <select id="clipMaskType">
+              <option value="none">无</option>
+              <option value="circle">圆形</option>
+              <option value="ellipse">椭圆</option>
+              <option value="left_half">左半</option>
+              <option value="right_half">右半</option>
+              <option value="top_half">上半</option>
+              <option value="bottom_half">下半</option>
+            </select>
+          </label>
+        </div>
+        <div class="jy-text-fields">
+          <label class="param-label">文字内容<input id="clipText" type="text" value="输入文字"></label>
+          <div class="text-preset-row">
+            <button type="button" class="text-preset" data-preset="classic">经典白字</button>
+            <button type="button" class="text-preset" data-preset="impact">爆点黄黑</button>
+            <button type="button" class="text-preset" data-preset="soft">柔和底板</button>
+          </div>
+          <div class="jy-param-grid">
+            <label class="param-label">字号<input id="clipFontSize" type="number" step="1" min="12" max="160" value="54"></label>
+            <label class="param-label">颜色<input id="clipColor" type="text" value="white"></label>
+            <label class="param-label">描边宽度<input id="clipStrokeWidth" type="number" step="1" min="0" max="16" value="2"></label>
+            <label class="param-label">描边颜色<input id="clipStrokeColor" type="text" value="black"></label>
+            <label class="param-label">阴影X<input id="clipShadowX" type="number" step="1" min="-20" max="20" value="0"></label>
+            <label class="param-label">阴影Y<input id="clipShadowY" type="number" step="1" min="-20" max="20" value="2"></label>
+            <label class="param-label">背景色<input id="clipBoxColor" type="text" value="black"></label>
+            <label class="param-label">背景透明度<input id="clipBoxOpacity" type="number" step="0.01" min="0" max="1" value="0.34"></label>
+          </div>
+        </div>
+        <label class="param-label">透明度<input id="clipOpacity" type="range" min="0" max="1" step="0.05" value="1"></label>
+        <label class="param-label">音量<input id="clipVolume" type="range" min="0" max="2" step="0.05" value="1"></label>
+        <div class="jy-param-grid">
+          <label class="param-label">音量起点<input id="clipVolumeStart" type="number" step="0.05" min="0" max="2" value="1"></label>
+          <label class="param-label">音量终点<input id="clipVolumeEnd" type="number" step="0.05" min="0" max="2" value="1"></label>
+        </div>
+        <div class="transform-toggle-row">
+          <label><input id="clipAudioEnabled" type="checkbox" checked> 保留原声</label>
+          <label><input id="clipDenoise" type="checkbox"> 降噪</label>
+          <label><input id="clipLoudnessNormalize" type="checkbox"> 响度均衡</label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">声道
+            <select id="clipAudioChannelMode">
+              <option value="stereo">立体声</option>
+              <option value="mono">单声道</option>
+              <option value="left">只取左声道</option>
+              <option value="right">只取右声道</option>
+            </select>
+          </label>
+          <label class="param-label">声像<input id="clipAudioPan" type="range" min="-1" max="1" step="0.05" value="0"></label>
+          <label class="param-label">音频偏移<input id="clipAudioOffset" type="number" step="0.05" min="-2" max="2" value="0"></label>
+        </div>
+        <div class="transform-toggle-row">
+          <label><input id="clipAudioDuckingEnabled" type="checkbox"> 自动压低背景音</label>
+          <label><input id="clipVocalIsolationEnabled" type="checkbox"> 提取人声</label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">压低到<input id="clipAudioDuckingLevel" type="number" step="0.05" min="0.05" max="1" value="0.35"></label>
+          <label class="param-label">提前压低<input id="clipAudioDuckingAttack" type="number" step="0.05" min="0" max="2" value="0.15"></label>
+          <label class="param-label">恢复时间<input id="clipAudioDuckingRelease" type="number" step="0.05" min="0" max="3" value="0.35"></label>
+          <label class="param-label">人声强度<input id="clipVocalIsolationStrength" type="number" step="0.05" min="0.1" max="1" value="0.7"></label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">滤镜
+            <select id="clipFilterPreset">
+              <option value="none">无</option>
+              <option value="cinematic">电影感</option>
+              <option value="warm">暖色</option>
+              <option value="cool">冷色</option>
+              <option value="vivid">鲜艳</option>
+              <option value="mono">黑白</option>
+              <option value="soft">柔焦</option>
+            </select>
+          </label>
+          <label class="param-label">对比度<input id="clipContrast" type="number" step="0.1" min="0.2" max="3" value="1"></label>
+          <label class="param-label">饱和度<input id="clipSaturation" type="number" step="0.1" min="0" max="3" value="1"></label>
+          <label class="param-label">亮度<input id="clipBrightness" type="number" step="0.05" min="-1" max="1" value="0"></label>
+          <label class="param-label">模糊<input id="clipBlur" type="number" step="0.1" min="0" max="20" value="0"></label>
+          <label class="param-label">锐化<input id="clipSharpen" type="number" step="0.1" min="0" max="2" value="0"></label>
+        </div>
+        <div class="transform-toggle-row">
+          <label><input id="clipChromaEnabled" type="checkbox"> 抠像</label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">抠像颜色<input id="clipChromaColor" type="text" value="#00ff00"></label>
+          <label class="param-label">相似度<input id="clipChromaSimilarity" type="number" step="0.01" min="0.01" max="1" value="0.18"></label>
+          <label class="param-label">柔边<input id="clipChromaBlend" type="number" step="0.01" min="0" max="1" value="0.08"></label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">淡入<input id="clipFadeIn" type="number" step="0.1" min="0" value="0"></label>
+          <label class="param-label">淡出<input id="clipFadeOut" type="number" step="0.1" min="0" value="0"></label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">入场动画
+            <select id="clipAnimationIn">
+              <option value="none">无</option>
+              <option value="slide_left">左侧滑入</option>
+              <option value="slide_right">右侧滑入</option>
+              <option value="slide_up">上方滑入</option>
+              <option value="slide_down">下方滑入</option>
+            </select>
+          </label>
+          <label class="param-label">入场时长<input id="clipAnimationInDuration" type="number" step="0.1" min="0" max="3" value="0.4"></label>
+          <label class="param-label">出场动画
+            <select id="clipAnimationOut">
+              <option value="none">无</option>
+              <option value="slide_left">左侧滑出</option>
+              <option value="slide_right">右侧滑出</option>
+              <option value="slide_up">上方滑出</option>
+              <option value="slide_down">下方滑出</option>
+            </select>
+          </label>
+          <label class="param-label">出场时长<input id="clipAnimationOutDuration" type="number" step="0.1" min="0" max="3" value="0.4"></label>
+        </div>
+        <div class="jy-param-grid">
+          <label class="param-label">转场
+            <select id="clipTransition">
+              <option value="none">硬切</option>
+              <option value="fade">淡入淡出</option>
+              <option value="wipeleft">向左擦除</option>
+              <option value="wiperight">向右擦除</option>
+              <option value="slideleft">向左滑动</option>
+              <option value="slideright">向右滑动</option>
+              <option value="circleopen">圆形打开</option>
+              <option value="circleclose">圆形关闭</option>
+            </select>
+          </label>
+          <label class="param-label">转场时长<input id="clipTransitionDuration" type="number" step="0.1" min="0" max="3" value="0"></label>
+        </div>
+        <button class="jy-save" type="submit">修改</button>
+      </form>
+    </aside>
+  </div>
+  <div class="jy-vertical-resize-handle" data-resize-panel="timeline" title="拖动调整时间线高度"></div>
+
+  <section class="jy-timeline-panel">
+    <div class="jy-timeline-toolbar">
+      <div class="jy-edit-tools">
+        <button id="addMediaBtn" class="jy-icon-button" type="button" title="添加"><i data-lucide="plus"></i></button>
+        <button id="selectToolBtn" class="jy-icon-button is-active" type="button" title="选择"><i data-lucide="mouse-pointer-2"></i></button>
+        <button id="undoBtn" class="jy-icon-button" title="撤销" type="button"><i data-lucide="undo-2"></i></button>
+        <button id="redoBtn" class="jy-icon-button" title="重做" type="button"><i data-lucide="redo-2"></i></button>
+        <button id="splitBtn" class="jy-icon-button" title="切分片段" type="button"><i data-lucide="scissors"></i></button>
+        <button id="freezeFrameBtn" class="jy-icon-button" title="定格帧" type="button"><i data-lucide="image-plus"></i></button>
+        <button id="prevEditPointBtn" class="jy-icon-button" title="上一个剪辑点" type="button"><i data-lucide="skip-back"></i></button>
+        <button id="nextEditPointBtn" class="jy-icon-button" title="下一个剪辑点" type="button"><i data-lucide="skip-forward"></i></button>
+        <button id="addMarkerBtn" class="jy-icon-button" title="添加时间线标记" type="button"><i data-lucide="flag"></i></button>
+        <button id="detachAudioBtn" class="jy-icon-button" title="分离音频" type="button"><i data-lucide="file-audio"></i></button>
+        <button id="isolateVocalBtn" class="jy-icon-button" title="提取人声" type="button"><i data-lucide="mic"></i></button>
+        <button id="addTextBtn" class="jy-icon-button" title="添加文字" type="button"><i data-lucide="type"></i></button>
+        <button id="duplicateBtn" class="jy-icon-button" title="复制片段" type="button"><i data-lucide="copy"></i></button>
+        <button id="pasteBtn" class="jy-icon-button" title="粘贴片段" type="button"><i data-lucide="clipboard-paste"></i></button>
+        <button id="deleteBtn" class="jy-icon-button" title="删除片段" type="button"><i data-lucide="trash-2"></i></button>
+        <button id="rippleDeleteBtn" class="jy-icon-button" title="删除并闭合空隙" type="button"><i data-lucide="list-x"></i></button>
+      </div>
+      <div class="jy-edit-tools">
+        <button id="recordBtn" class="jy-icon-button" type="button" title="录音"><i data-lucide="mic"></i></button>
+        <button id="linkedSelectionBtn" class="jy-icon-button is-active" type="button" title="联动"><i data-lucide="link"></i></button>
+        <button id="rippleInsertBtn" class="jy-icon-button" type="button" title="波纹模式：添加素材或右侧修剪时联动后方片段"><i data-lucide="panel-right-open"></i></button>
+        <button id="snapBtn" class="jy-icon-button is-active" type="button" title="吸附"><i data-lucide="magnet"></i></button>
+        <button id="toggleEmptyTracksBtn" class="jy-icon-button" type="button" title="显示空轨道"><i data-lucide="panel-bottom-open"></i></button>
+        <button id="zoomOutBtn" class="jy-icon-button" type="button" title="缩小"><i data-lucide="zoom-out"></i></button>
+        <input id="timelineZoom" class="jy-zoom" type="range" min="0" max="100" value="42">
+        <button id="zoomInBtn" class="jy-icon-button" type="button" title="放大"><i data-lucide="zoom-in"></i></button>
+      </div>
+    </div>
+    <div id="playhead" class="jy-playhead"></div>
+    <div id="timelineRuler" class="jy-timeline-ruler"></div>
+    <div id="timeline" class="timeline-board"></div>
+    <div id="timelineSelectionBox" class="timeline-selection-box" hidden></div>
+    <div id="clipContextMenu" class="clip-context-menu" hidden>
+      <button type="button" data-context-action="copy"><i data-lucide="copy"></i><span>复制</span></button>
+      <button type="button" data-context-action="cut"><i data-lucide="scissors"></i><span>剪切</span></button>
+      <button type="button" data-context-action="copy-attrs"><i data-lucide="copy-check"></i><span>复制属性</span></button>
+      <button type="button" data-context-action="paste-attrs"><i data-lucide="clipboard-check"></i><span>粘贴属性</span></button>
+      <button type="button" data-context-action="delete"><i data-lucide="trash-2"></i><span>删除</span></button>
+      <button type="button" data-context-action="split"><i data-lucide="scissors"></i><span>切分</span></button>
+      <button type="button" data-context-action="duplicate"><i data-lucide="copy-plus"></i><span>复制到后方</span></button>
+      <button type="button" data-context-action="save-preset"><i data-lucide="badge-plus"></i><span>保存为我的预设</span></button>
+      <button type="button" data-context-action="toggle-enabled"><i data-lucide="eye-off"></i><span>停用/启用片段</span></button>
+      <button type="button" data-context-action="lock"><i data-lucide="lock-keyhole"></i><span>锁定/解锁</span></button>
+      <button type="button" data-context-action="edit-text"><i data-lucide="text-cursor-input"></i><span>编辑字幕</span></button>
+      <button type="button" data-context-action="freeze-frame"><i data-lucide="image-plus"></i><span>定格帧</span></button>
+      <button type="button" data-context-action="replace-asset"><i data-lucide="replace"></i><span>替换为选中素材</span></button>
+      <button type="button" data-context-action="snap-previous"><i data-lucide="chevrons-left"></i><span>闭合前方空隙</span></button>
+      <button type="button" data-context-action="detach"><i data-lucide="file-audio"></i><span>分离音频</span></button>
+      <button type="button" data-context-action="isolate-vocal"><i data-lucide="mic"></i><span>提取人声</span></button>
+      <button type="button" data-context-action="ripple-delete"><i data-lucide="list-x"></i><span>删除并闭合空隙</span></button>
+      <button type="button" data-context-action="export-selected"><i data-lucide="download"></i><span>导出所选片段</span></button>
+      <button type="button" data-context-action="show-file"><i data-lucide="folder-search"></i><span>文件所在位置</span></button>
+    </div>
+  </section>
+</section>
+
+<script>
+const projectId = {{ project.id }};
+let projectData = {{ project_data|tojson }};
+let selectedAsset = null;
+let selectedClip = null;
+let selectedClipId = null;
+let selectedClipIds = new Set();
+let draggedAsset = null;
+let draggedClip = null;
+let assetPointerDragState = null;
+let assetDragGhost = null;
+let suppressAssetClick = false;
+let trimState = null;
+let timelineDragState = null;
+let trackDragState = null;
+let selectionBoxState = null;
+let playheadTime = 0;
+let timelineZoom = 42;
+let snapEnabled = true;
+let isPlaying = false;
+let playbackFrame = null;
+let playbackStartedAt = 0;
+let playbackStartedTime = 0;
+let clipboardClipIds = [];
+let clipboardClipSnapshots = [];
+let clipboardClipAttrs = null;
+let previewDragState = null;
+let panelResizeState = null;
+let previewSignature = '';
+let contextMenuClipId = null;
+let suppressTimelineClick = false;
+let nameDialogResolve = null;
+
+function requestEditorName({title, value = '', placeholder = ''}) {
+  const dialog = document.getElementById('editorNameDialog');
+  const titleNode = document.getElementById('editorNameDialogTitle');
+  const input = document.getElementById('editorNameDialogInput');
+  titleNode.textContent = title || '命名';
+  input.value = value || '';
+  input.placeholder = placeholder || '';
+  dialog.hidden = false;
+  lucide.createIcons();
+  window.setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 0);
+  return new Promise(resolve => {
+    nameDialogResolve = resolve;
+  });
+}
+
+function copyClipAttributes(clip) {
+  if (!clip) return null;
+  const params = clip.params || {};
+  return {
+    enabled: params.enabled ?? true,
+    locked: params.locked ?? false,
+    fit_mode: params.fit_mode ?? 'contain',
+    background_color: params.background_color ?? '#000000',
+    x: params.x ?? 80,
+    y: params.y ?? 120,
+    width: params.width ?? 420,
+    keyframe_enabled: params.keyframe_enabled ?? false,
+    keyframe_end_x: params.keyframe_end_x ?? params.x ?? 80,
+    keyframe_end_y: params.keyframe_end_y ?? params.y ?? 120,
+    keyframe_end_width: params.keyframe_end_width ?? params.width ?? 420,
+    keyframes: params.keyframes ?? [],
+    overlay_border_width: params.overlay_border_width ?? 0,
+    overlay_border_color: params.overlay_border_color ?? '#ffffff',
+    overlay_shadow: params.overlay_shadow ?? 0,
+    overlay_blend_mode: params.overlay_blend_mode ?? 'normal',
+    opacity: params.opacity ?? 1,
+    volume: params.volume ?? 1,
+    volume_start: params.volume_start ?? params.volume ?? 1,
+    volume_end: params.volume_end ?? params.volume ?? 1,
+    audio_enabled: params.audio_enabled ?? true,
+    denoise: params.denoise ?? false,
+    loudness_normalize: params.loudness_normalize ?? false,
+    audio_channel_mode: params.audio_channel_mode ?? 'stereo',
+    audio_pan: params.audio_pan ?? 0,
+    audio_offset: params.audio_offset ?? 0,
+    audio_ducking_enabled: params.audio_ducking_enabled ?? false,
+    audio_ducking_level: params.audio_ducking_level ?? 0.35,
+    audio_ducking_attack: params.audio_ducking_attack ?? 0.15,
+    audio_ducking_release: params.audio_ducking_release ?? 0.35,
+    vocal_isolation_enabled: params.vocal_isolation_enabled ?? false,
+    vocal_isolation_strength: params.vocal_isolation_strength ?? 0.7,
+    speed: params.speed ?? 1,
+    speed_curve: params.speed_curve ?? 'none',
+    rotation: params.rotation ?? 0,
+    flip_x: params.flip_x ?? false,
+    flip_y: params.flip_y ?? false,
+    reverse: params.reverse ?? false,
+    crop_left: params.crop_left ?? 0,
+    crop_right: params.crop_right ?? 0,
+    crop_top: params.crop_top ?? 0,
+    crop_bottom: params.crop_bottom ?? 0,
+    motion_preset: params.motion_preset ?? 'none',
+    motion_intensity: params.motion_intensity ?? 0.08,
+    mask_type: params.mask_type ?? 'none',
+    filter_preset: params.filter_preset ?? 'none',
+    contrast: params.contrast ?? 1,
+    saturation: params.saturation ?? 1,
+    brightness: params.brightness ?? 0,
+    blur: params.blur ?? 0,
+    sharpen: params.sharpen ?? 0,
+    chroma_enabled: params.chroma_enabled ?? false,
+    chroma_color: params.chroma_color ?? '#00ff00',
+    chroma_similarity: params.chroma_similarity ?? 0.18,
+    chroma_blend: params.chroma_blend ?? 0.08,
+    transition: params.transition ?? 'none',
+    transition_duration: params.transition_duration ?? 0,
+    text: params.text ?? clip.name ?? '',
+    font_size: params.font_size ?? 54,
+    color: params.color ?? 'white',
+    stroke_width: params.stroke_width ?? 2,
+    stroke_color: params.stroke_color ?? 'black',
+    shadow_x: params.shadow_x ?? 0,
+    shadow_y: params.shadow_y ?? 2,
+    box_color: params.box_color ?? 'black',
+    box_opacity: params.box_opacity ?? 0.34,
+    fade_in: params.fade_in ?? 0,
+    fade_out: params.fade_out ?? 0,
+    animation_in: params.animation_in ?? 'none',
+    animation_in_duration: params.animation_in_duration ?? 0.4,
+    animation_out: params.animation_out ?? 'none',
+    animation_out_duration: params.animation_out_duration ?? 0.4
+  };
+}
+
+async function applyClipboardAttributesToCurrentClip() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clipboardClipAttrs || !clip || isClipLocked(clip)) return false;
+  const attrs = clipboardClipAttrs;
+  const payload = {
+    enabled: attrs.enabled ? 'true' : 'false',
+    locked: attrs.locked ? 'true' : 'false',
+    fit_mode: attrs.fit_mode,
+    background_color: attrs.background_color,
+    x: attrs.x,
+    y: attrs.y,
+    width: attrs.width,
+    keyframe_enabled: attrs.keyframe_enabled ? 'true' : '',
+    keyframe_end_x: attrs.keyframe_end_x,
+    keyframe_end_y: attrs.keyframe_end_y,
+    keyframe_end_width: attrs.keyframe_end_width,
+    keyframes: JSON.stringify(attrs.keyframes || []),
+    overlay_border_width: attrs.overlay_border_width,
+    overlay_border_color: attrs.overlay_border_color,
+    overlay_shadow: attrs.overlay_shadow,
+    overlay_blend_mode: attrs.overlay_blend_mode,
+    opacity: attrs.opacity,
+    volume: attrs.volume,
+    volume_start: attrs.volume_start,
+    volume_end: attrs.volume_end,
+    audio_enabled: attrs.audio_enabled ? 'true' : 'false',
+    denoise: attrs.denoise ? 'true' : 'false',
+    loudness_normalize: attrs.loudness_normalize ? 'true' : 'false',
+    audio_channel_mode: attrs.audio_channel_mode,
+    audio_pan: attrs.audio_pan,
+    audio_offset: attrs.audio_offset,
+    audio_ducking_enabled: attrs.audio_ducking_enabled ? 'true' : 'false',
+    audio_ducking_level: attrs.audio_ducking_level,
+    audio_ducking_attack: attrs.audio_ducking_attack,
+    audio_ducking_release: attrs.audio_ducking_release,
+    vocal_isolation_enabled: attrs.vocal_isolation_enabled ? 'true' : 'false',
+    vocal_isolation_strength: attrs.vocal_isolation_strength,
+    speed: attrs.speed,
+    speed_curve: attrs.speed_curve,
+    rotation: attrs.rotation,
+    flip_x: attrs.flip_x ? 'true' : '',
+    flip_y: attrs.flip_y ? 'true' : '',
+    reverse: attrs.reverse ? 'true' : '',
+    crop_left: attrs.crop_left,
+    crop_right: attrs.crop_right,
+    crop_top: attrs.crop_top,
+    crop_bottom: attrs.crop_bottom,
+    motion_preset: attrs.motion_preset,
+    motion_intensity: attrs.motion_intensity,
+    mask_type: attrs.mask_type,
+    filter_preset: attrs.filter_preset,
+    contrast: attrs.contrast,
+    saturation: attrs.saturation,
+    brightness: attrs.brightness,
+    blur: attrs.blur,
+    sharpen: attrs.sharpen,
+    chroma_enabled: attrs.chroma_enabled ? 'true' : '',
+    chroma_color: attrs.chroma_color,
+    chroma_similarity: attrs.chroma_similarity,
+    chroma_blend: attrs.chroma_blend,
+    transition: attrs.transition,
+    transition_duration: attrs.transition_duration,
+    text: attrs.text,
+    font_size: attrs.font_size,
+    color: attrs.color,
+    stroke_width: attrs.stroke_width,
+    stroke_color: attrs.stroke_color,
+    shadow_x: attrs.shadow_x,
+    shadow_y: attrs.shadow_y,
+    box_color: attrs.box_color,
+    box_opacity: attrs.box_opacity,
+    fade_in: attrs.fade_in,
+    fade_out: attrs.fade_out,
+    animation_in: attrs.animation_in,
+    animation_in_duration: attrs.animation_in_duration,
+    animation_out: attrs.animation_out,
+    animation_out_duration: attrs.animation_out_duration
+  };
+  await updateClipFromState(clip, payload);
+  return true;
+}
+
+function closeEditorNameDialog(value = null) {
+  const dialog = document.getElementById('editorNameDialog');
+  dialog.hidden = true;
+  if (nameDialogResolve) {
+    const resolve = nameDialogResolve;
+    nameDialogResolve = null;
+    resolve(value);
+  }
+}
+let exportPollTimer = null;
+let mediaRecorder = null;
+let recordingChunks = [];
+let recordingStartedAt = 0;
+let linkedSelectionEnabled = true;
+let rippleInsertEnabled = false;
+let showEmptyTimelineTracks = true;
+let previewOriginalScale = false;
+
+function apiPost(url, data = {}) {
+  const body = new FormData();
+  Object.entries(data).forEach(([key, value]) => body.append(key, value));
+  return fetch(url, { method: 'POST', body }).then(async res => {
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  });
+}
+
+function exportStatusText(status) {
+  return {pending: '排队中', processing: '渲染中', success: '已完成', failed: '失败'}[status] || status || '等待';
+}
+
+function setExportBusy(isBusy) {
+  const button = document.querySelector('.jy-export-form button[type="submit"]');
+  if (!button) return;
+  button.disabled = isBusy;
+  button.classList.toggle('is-busy', isBusy);
+  button.querySelector('span').textContent = isBusy ? '导出中' : '导出';
+}
+
+function updateEditorExportPanel(task = {}, taskUrl = '') {
+  const panel = document.getElementById('editorExportPanel');
+  if (!panel) return;
+  const progress = clamp(Number(task.progress || 0), 0, 100);
+  const status = task.status || 'processing';
+  const detailUrl = taskUrl || (task.id ? `/task/${task.id}` : '#');
+  panel.hidden = false;
+  panel.dataset.status = status;
+  document.getElementById('editorExportTitle').textContent = task.id ? `导出任务 #${task.id}` : '导出任务';
+  document.getElementById('editorExportStatus').textContent = exportStatusText(status);
+  document.getElementById('editorExportBar').style.width = `${progress}%`;
+  document.getElementById('editorExportPercent').textContent = `${Math.round(progress)}%`;
+  document.getElementById('editorExportStage').textContent = task.stage || '等待多轨渲染';
+
+  const actions = document.getElementById('editorExportActions');
+  const preview = document.getElementById('editorExportPreview');
+  const download = document.getElementById('editorExportDownload');
+  const detail = document.getElementById('editorExportDetail');
+  detail.href = detailUrl;
+  preview.hidden = !task.result_url;
+  download.hidden = !task.result_url;
+  if (task.result_url) {
+    preview.href = task.result_url;
+    download.href = task.result_url;
+  }
+  actions.hidden = !task.id;
+}
+
+async function pollEditorExportTask(taskId, taskUrl = '') {
+  clearTimeout(exportPollTimer);
+  try {
+    const res = await fetch(`/api/task/${taskId}/progress`);
+    if (!res.ok) throw new Error(await res.text());
+    const task = await res.json();
+    updateEditorExportPanel(task, taskUrl);
+    if (task.status === 'pending' || task.status === 'processing') {
+      exportPollTimer = setTimeout(() => pollEditorExportTask(taskId, taskUrl), 1200);
+    } else {
+      setExportBusy(false);
+    }
+  } catch (error) {
+    updateEditorExportPanel({id: taskId, status: 'failed', progress: 0, stage: `进度读取失败：${error.message}`}, taskUrl);
+    setExportBusy(false);
+  }
+}
+
+async function submitEditorExport(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  setExportBusy(true);
+  updateEditorExportPanel({status: 'processing', progress: 0, stage: '正在提交导出任务'});
+  try {
+    const res = await fetch(form.action, {
+      method: 'POST',
+      body: new FormData(form),
+      headers: {
+        Accept: 'application/json',
+        'X-Requested-With': 'fetch'
+      }
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    updateEditorExportPanel(data.task, data.task_url);
+    pollEditorExportTask(data.task.id, data.task_url);
+  } catch (error) {
+    updateEditorExportPanel({status: 'failed', progress: 0, stage: `导出启动失败：${error.message}`});
+    setExportBusy(false);
+  }
+}
+
+async function exportSelectedClip() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip) return;
+  const form = document.querySelector('.jy-export-form');
+  const body = new FormData(form || undefined);
+  body.set('clip_id', clip.id);
+  setExportBusy(true);
+  updateEditorExportPanel({status: 'pending', progress: 0, stage: '等待导出所选片段'});
+  try {
+    const res = await fetch(`/editor/project/${projectId}/render-selected`, {
+      method: 'POST',
+      body,
+      headers: {
+        Accept: 'application/json',
+        'X-Requested-With': 'fetch'
+      }
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    updateEditorExportPanel(data.task, data.task_url);
+    pollEditorExportTask(data.task.id, data.task_url);
+  } catch (error) {
+    updateEditorExportPanel({status: 'failed', progress: 0, stage: `导出所选片段失败：${error.message}`});
+    setExportBusy(false);
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function applyStoredPanelSizes() {
+  const workspace = document.querySelector('.editor-workspace');
+  const main = document.querySelector('.jy-main');
+  if (!main || !workspace) return;
+  const mediaWidth = Number(localStorage.getItem('ace-editor-media-width') || 320);
+  const inspectorWidth = Number(localStorage.getItem('ace-editor-inspector-width') || 320);
+  const mainHeight = Number(localStorage.getItem('ace-editor-main-height') || 0);
+  main.style.setProperty('--jy-media-width', `${clamp(mediaWidth, 220, 560)}px`);
+  main.style.setProperty('--jy-inspector-width', `${clamp(inspectorWidth, 240, 560)}px`);
+  if (mainHeight) {
+    workspace.style.setProperty('--jy-main-height', `${clamp(mainHeight, 220, window.innerHeight - 190)}px`);
+  }
+}
+
+function trackLabel(type) {
+  return {video: '视频', overlay: '叠加', text: '字幕', audio: '音乐', sfx: '音效'}[type] || type;
+}
+
+const canvasPresets = {
+  vertical: {width: 1080, height: 1920},
+  horizontal: {width: 1920, height: 1080},
+  square: {width: 1080, height: 1080},
+  portrait43: {width: 1080, height: 1440},
+  landscape43: {width: 1440, height: 1080}
+};
+
+const stickerPresets = {
+  point: {text: '重点', color: '#facc15', stroke_width: 4, stroke_color: '#111111', box_color: '#111111', box_opacity: 0.18, font_size: 64, width_ratio: 0.36},
+  boom: {text: '爆点', color: '#ff3b30', stroke_width: 5, stroke_color: '#ffffff', box_color: '#111111', box_opacity: 0.22, font_size: 70, width_ratio: 0.34},
+  question: {text: '疑问?', color: '#67e8f9', stroke_width: 3, stroke_color: '#0f172a', box_color: '#0f172a', box_opacity: 0.35, font_size: 62, width_ratio: 0.34},
+  warning: {text: '注意', color: '#ffffff', stroke_width: 3, stroke_color: '#ef4444', box_color: '#ef4444', box_opacity: 0.42, font_size: 58, width_ratio: 0.34},
+  arrow: {text: '>>>', color: '#ffffff', stroke_width: 2, stroke_color: '#000000', box_color: '#14c8d4', box_opacity: 0.48, font_size: 72, width_ratio: 0.30},
+  cta: {text: '关注', color: '#ffffff', stroke_width: 3, stroke_color: '#000000', box_color: '#22c55e', box_opacity: 0.42, font_size: 60, width_ratio: 0.34}
+};
+
+const effectPresets = {
+  vivid: {filter_preset: 'vivid', contrast: 1.1, saturation: 1.25, brightness: 0.02, blur: 0, sharpen: 0.2},
+  cinematic: {filter_preset: 'cinematic', contrast: 1.12, saturation: 0.92, brightness: -0.02, blur: 0, sharpen: 0.1},
+  warm: {filter_preset: 'warm', contrast: 1.05, saturation: 1.1, brightness: 0.02, blur: 0, sharpen: 0},
+  cool: {filter_preset: 'cool', contrast: 1.06, saturation: 0.95, brightness: -0.01, blur: 0, sharpen: 0.1},
+  soft: {filter_preset: 'soft', contrast: 1, saturation: 0.95, brightness: 0.03, blur: 0.7, sharpen: 0},
+  impact: {filter_preset: 'vivid', contrast: 1.2, saturation: 1.4, brightness: 0.05, blur: 0, sharpen: 0.7}
+};
+
+const transitionPresets = {
+  fade: {transition: 'fade', transition_duration: 0.6},
+  wipeleft: {transition: 'wipeleft', transition_duration: 0.55},
+  wiperight: {transition: 'wiperight', transition_duration: 0.55},
+  slideleft: {transition: 'slideleft', transition_duration: 0.5},
+  slideright: {transition: 'slideright', transition_duration: 0.5},
+  circleopen: {transition: 'circleopen', transition_duration: 0.65}
+};
+
+function projectCanvas() {
+  return projectData.canvas || {width: 1080, height: 1920, fps: 30};
+}
+
+function currentCanvasPreset(canvas = projectCanvas()) {
+  const match = Object.entries(canvasPresets).find(([_key, preset]) => preset.width === Number(canvas.width) && preset.height === Number(canvas.height));
+  return match?.[0] || 'custom';
+}
+
+function setProjectCanvasInputsFromPreset(presetKey) {
+  const preset = canvasPresets[presetKey];
+  if (!preset) return;
+  document.getElementById('projectCanvasWidth').value = preset.width;
+  document.getElementById('projectCanvasHeight').value = preset.height;
+}
+
+function syncProjectCanvasControls() {
+  const canvas = projectCanvas();
+  const preset = currentCanvasPreset(canvas);
+  const title = document.querySelector('.jy-project-title strong');
+  if (title) title.textContent = projectData.name || '未命名剪辑工程';
+  document.getElementById('projectNameSummary').textContent = projectData.name || '未命名剪辑工程';
+  document.getElementById('projectCanvasSummary').textContent = `${canvas.width} x ${canvas.height}`;
+  document.getElementById('projectFpsSummary').textContent = `${canvas.fps || 30} fps`;
+  document.getElementById('projectNameInput').value = projectData.name || '';
+  document.getElementById('projectCanvasWidth').value = canvas.width || 1080;
+  document.getElementById('projectCanvasHeight').value = canvas.height || 1920;
+  document.getElementById('projectFpsInput').value = canvas.fps || 30;
+  document.getElementById('projectCanvasPreset').value = preset;
+  document.getElementById('quickCanvasPreset').value = preset;
+  document.getElementById('previewPane').style.setProperty('--canvas-ratio', `${canvas.width || 1080} / ${canvas.height || 1920}`);
+}
+
+async function saveProjectSettings(overrides = {}) {
+  const preset = overrides.canvas ?? document.getElementById('projectCanvasPreset').value;
+  const presetSize = canvasPresets[preset];
+  const width = presetSize?.width ?? document.getElementById('projectCanvasWidth').value;
+  const height = presetSize?.height ?? document.getElementById('projectCanvasHeight').value;
+  applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/settings`, {
+    name: overrides.name ?? document.getElementById('projectNameInput').value,
+    canvas: preset,
+    width,
+    height,
+    fps: overrides.fps ?? document.getElementById('projectFpsInput').value
+  }));
+}
+
+function timelineDuration() {
+  return Math.max(30, projectData.duration || 30);
+}
+
+function pixelsPerSecond() {
+  return 24 + timelineZoom * 1.65;
+}
+
+function timelineLaneWidth() {
+  return Math.max(960, Math.round(timelineDuration() * pixelsPerSecond()));
+}
+
+function rulerStep() {
+  const pps = pixelsPerSecond();
+  if (pps >= 160) return 0.5;
+  if (pps >= 90) return 1;
+  if (pps >= 52) return 2;
+  if (pps >= 34) return 5;
+  return 10;
+}
+
+function formatTimecode(seconds) {
+  const fps = projectData.canvas?.fps || 30;
+  const totalFrames = Math.max(0, Math.round(seconds * fps));
+  const frames = totalFrames % fps;
+  const totalSeconds = Math.floor(totalFrames / fps);
+  const hh = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const ss = String(totalSeconds % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}:${String(frames).padStart(2, '0')}`;
+}
+
+function snapTime(time) {
+  if (!snapEnabled) return Math.round(time * 10) / 10;
+  const marks = [0, playheadTime];
+  allClips().forEach(clip => {
+    marks.push(clip.start_time);
+    marks.push(clip.start_time + clip.duration);
+  });
+  const closeMark = marks.find(mark => Math.abs(mark - time) <= 0.18);
+  if (closeMark !== undefined) return Math.max(0, Math.round(closeMark * 10) / 10);
+  return Math.round(time * 2) / 2;
+}
+
+function editPointTimes() {
+  const points = new Set([0, Number(projectData.duration || 0)]);
+  allClips().forEach(clip => {
+    points.add(Number(Number(clip.start_time || 0).toFixed(3)));
+    points.add(Number(Number((clip.start_time || 0) + (clip.duration || 0)).toFixed(3)));
+  });
+  return [...points]
+    .filter(point => Number.isFinite(point) && point >= 0)
+    .sort((a, b) => a - b);
+}
+
+function scrollTimelineToPlayhead() {
+  const board = document.getElementById('timeline');
+  if (!board) return;
+  const targetLeft = playheadTime / timelineDuration() * timelineLaneWidth();
+  const visibleLeft = board.scrollLeft;
+  const visibleRight = visibleLeft + board.clientWidth;
+  if (targetLeft < visibleLeft + 90 || targetLeft > visibleRight - 90) {
+    board.scrollLeft = Math.max(0, targetLeft - board.clientWidth / 2);
+    renderRuler();
+    updatePlayhead();
+  }
+}
+
+function jumpToEditPoint(direction) {
+  const points = editPointTimes();
+  const epsilon = 0.04;
+  const target = direction < 0
+    ? [...points].reverse().find(point => point < playheadTime - epsilon)
+    : points.find(point => point > playheadTime + epsilon);
+  if (target === undefined) return;
+  setPlayhead(target);
+  scrollTimelineToPlayhead();
+}
+
+function timeFromLanePoint(clientX, laneLike) {
+  const rect = laneLike.getBoundingClientRect();
+  const duration = timelineDuration();
+  const scrollLeft = laneLike.scrollLeft || document.getElementById('timeline').scrollLeft || 0;
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left + scrollLeft) / timelineLaneWidth()));
+  return snapTime(ratio * duration);
+}
+
+function timeDeltaFromPixels(deltaX) {
+  return deltaX / timelineLaneWidth() * timelineDuration();
+}
+
+function paintTimelineClip(element, startTime, duration) {
+  const total = timelineDuration();
+  element.style.left = `${Math.max(0, startTime / total * 100)}%`;
+  element.style.width = `${Math.max(5, duration / total * 100)}%`;
+}
+
+function findTrackForClip(clipId) {
+  const id = Number(clipId);
+  return projectData.tracks.find(track => track.clips.some(clip => clip.id === id)) || null;
+}
+
+function findTrackById(trackId) {
+  const id = Number(trackId);
+  return projectData.tracks.find(track => track.id === id) || null;
+}
+
+function isTrackLockedForClip(clip) {
+  return Boolean(findTrackForClip(clip.id)?.locked);
+}
+
+function isClipLocked(clip) {
+  return Boolean(isTrackLockedForClip(clip) || clip.params?.locked);
+}
+
+function resizePreviewStage() {
+  const pane = document.getElementById('previewPane');
+  const stage = pane.querySelector('.jy-preview-stage:not(.is-audio):not(.is-sfx)');
+  if (!stage) return;
+  const canvas = projectCanvas();
+  if (previewOriginalScale) {
+    stage.style.width = `${canvas.width || 1080}px`;
+    stage.style.height = `${canvas.height || 1920}px`;
+    return;
+  }
+  const ratio = (canvas.width || 16) / (canvas.height || 9);
+  const padding = 48;
+  const availableWidth = Math.max(160, pane.clientWidth - padding);
+  const availableHeight = Math.max(160, pane.clientHeight - padding);
+  let width = availableWidth;
+  let height = width / ratio;
+  if (height > availableHeight) {
+    height = availableHeight;
+    width = height * ratio;
+  }
+  stage.style.width = `${Math.round(width)}px`;
+  stage.style.height = `${Math.round(height)}px`;
+}
+
+function allClips() {
+  return projectData.tracks.flatMap(track => track.clips);
+}
+
+function timelineMarkers() {
+  return [...(projectData.markers || [])].sort((a, b) => Number(a.time || 0) - Number(b.time || 0));
+}
+
+function findClipById(clipId) {
+  const id = Number(clipId);
+  return allClips().find(clip => clip.id === id) || null;
+}
+
+function selectedClipIdList() {
+  const ids = [...selectedClipIds].filter(id => findClipById(id));
+  if (ids.length) return ids;
+  return selectedClipId ? [Number(selectedClipId)] : [];
+}
+
+function linkedClipIdsFor(clip) {
+  const ids = new Set([Number(clip.id)]);
+  const linkedSourceId = Number(clip.params?.detached_from_clip_id || clip.params?.isolated_vocal_from_clip_id || 0);
+  const sourceId = linkedSourceId || Number(clip.id);
+  allClips().forEach(item => {
+    const itemDetachedFrom = Number(item.params?.detached_from_clip_id || 0);
+    const itemVocalFrom = Number(item.params?.isolated_vocal_from_clip_id || 0);
+    if (itemDetachedFrom && (itemDetachedFrom === Number(clip.id) || itemDetachedFrom === sourceId)) ids.add(Number(item.id));
+    if (itemVocalFrom && (itemVocalFrom === Number(clip.id) || itemVocalFrom === sourceId)) ids.add(Number(item.id));
+    if (linkedSourceId && Number(item.id) === linkedSourceId) ids.add(Number(item.id));
+  });
+  return ids;
+}
+
+function timelineClipElement(clipId) {
+  return document.querySelector(`.timeline-clip[data-clip-id="${clipId}"]`);
+}
+
+function rectsIntersect(a, b) {
+  return a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top;
+}
+
+function normalizeRect(startX, startY, endX, endY) {
+  return {
+    left: Math.min(startX, endX),
+    top: Math.min(startY, endY),
+    right: Math.max(startX, endX),
+    bottom: Math.max(startY, endY),
+    width: Math.abs(endX - startX),
+    height: Math.abs(endY - startY)
+  };
+}
+
+function syncSelectedClipClasses() {
+  document.querySelectorAll('.timeline-clip').forEach(el => {
+    const id = Number(el.dataset.clipId);
+    el.classList.toggle('is-selected', selectedClipIds.has(id) || Number(selectedClipId) === id);
+  });
+}
+
+function clearClipSelection() {
+  selectedClip = null;
+  selectedClipId = null;
+  selectedClipIds = new Set();
+  document.getElementById('clipId').value = '';
+  document.querySelectorAll('.timeline-clip').forEach(el => el.classList.remove('is-selected'));
+  document.querySelector('.jy-text-fields').classList.remove('is-visible');
+  document.querySelector('.jy-inspector')?.classList.remove('is-editing-clip');
+  document.getElementById('keyframeList').innerHTML = '<span>暂无关键帧</span>';
+}
+
+function renderRuler() {
+  const ruler = document.getElementById('timelineRuler');
+  const width = timelineLaneWidth();
+  const duration = timelineDuration();
+  const step = rulerStep();
+  const marks = [];
+  for (let t = 0; t <= duration + 0.001; t += step) {
+    const left = t / duration * width;
+    const isMajor = Math.abs(t % (step * 5)) < 0.001 || t === 0;
+    marks.push(`<span class="ruler-mark ${isMajor ? 'is-major' : ''}" style="left:${left}px"><em>${isMajor ? formatTimecode(t).slice(3, 8) : ''}</em></span>`);
+  }
+  const markerHtml = timelineMarkers().map(marker => {
+    const time = Math.max(0, Math.min(duration, Number(marker.time || 0)));
+    const left = time / duration * width;
+    const label = escapeHtml(marker.label || '标记');
+    return `
+      <button class="ruler-marker" type="button" data-marker-id="${marker.id}" data-marker-time="${time}" style="left:${left}px" title="${label} ${formatTimecode(time)}">
+        <i data-lucide="flag"></i>
+        <span>${label}</span>
+        <em>${formatTimecode(time).slice(3, 8)}</em>
+        <b class="ruler-marker-delete" role="button" tabindex="0" title="删除标记" aria-label="删除标记">×</b>
+      </button>
+    `;
+  });
+  ruler.innerHTML = `
+    <div class="ruler-head">时间</div>
+    <div class="ruler-scroll"><div class="ruler-marks" style="width:${width}px">${marks.join('')}${markerHtml.join('')}</div></div>
+  `;
+  ruler.querySelector('.ruler-scroll').addEventListener('click', event => {
+    setPlayhead(timeFromLanePoint(event.clientX, event.currentTarget));
+  });
+  ruler.querySelectorAll('.ruler-marker').forEach(marker => {
+    marker.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      setPlayhead(Number(marker.dataset.markerTime || 0));
+    });
+    marker.querySelector('.ruler-marker-delete')?.addEventListener('click', async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      await deleteMarker(marker.dataset.markerId);
+    });
+  });
+  lucide.createIcons();
+  syncRulerScroll();
+}
+
+function syncRulerScroll() {
+  const board = document.getElementById('timeline');
+  const marks = document.querySelector('#timelineRuler .ruler-marks');
+  if (board && marks) marks.style.transform = `translateX(${-board.scrollLeft}px)`;
+}
+
+function renderPreview(asset) {
+  const pane = document.getElementById('previewPane');
+  document.getElementById('selectedAssetName').textContent = asset ? asset.name : '未选择素材';
+  if (!asset || !asset.url) {
+    pane.innerHTML = '<span class="text-sm font-bold text-slate-600">选择素材或时间线片段后预览</span>';
+    return;
+  }
+  pane.innerHTML = '';
+  const stage = document.createElement('div');
+  stage.className = `jy-preview-stage is-${asset.asset_type}`;
+  if (asset.asset_type === 'video') {
+    const video = document.createElement('video');
+    video.controls = true;
+    video.src = asset.url;
+    stage.appendChild(video);
+  } else if (asset.asset_type === 'image') {
+    const image = document.createElement('img');
+    image.src = asset.url;
+    image.alt = asset.name || '';
+    stage.appendChild(image);
+  } else if (asset.asset_type === 'audio' || asset.asset_type === 'sfx') {
+    const wave = document.createElement('div');
+    wave.className = 'jy-audio-preview-wave';
+    Array.from({length: 32}).forEach((_, index) => {
+      const bar = document.createElement('span');
+      bar.style.height = `${18 + ((index * 17) % 42)}px`;
+      wave.appendChild(bar);
+    });
+    const audio = document.createElement('audio');
+    audio.controls = true;
+    audio.src = asset.url;
+    stage.appendChild(wave);
+    stage.appendChild(audio);
+  } else {
+    stage.textContent = '该素材暂不支持预览';
+  }
+  pane.appendChild(stage);
+  resizePreviewStage();
+}
+
+function renderTextPreview(clip) {
+  const params = clip.params || {};
+  const pane = document.getElementById('previewPane');
+  document.getElementById('selectedAssetName').textContent = clip.name || '文字片段';
+  pane.innerHTML = '';
+  const stage = document.createElement('div');
+  stage.className = 'jy-preview-stage is-text';
+  const preview = document.createElement('div');
+  preview.className = 'jy-text-preview';
+  preview.style.fontSize = `${params.font_size || 54}px`;
+  preview.style.color = params.color || 'white';
+  preview.style.webkitTextStroke = `${params.stroke_width ?? 2}px ${params.stroke_color || 'black'}`;
+  preview.style.textShadow = `${params.shadow_x ?? 0}px ${params.shadow_y ?? 2}px 8px rgba(0,0,0,.75)`;
+  preview.style.background = textBoxBackground(params);
+  preview.textContent = params.text || clip.name || '输入文字';
+  stage.appendChild(preview);
+  pane.appendChild(stage);
+  resizePreviewStage();
+}
+
+function textBoxBackground(params) {
+  const opacity = Number(params.box_opacity ?? 0.34);
+  if (opacity <= 0) return 'transparent';
+  return colorWithOpacity(params.box_color || 'black', opacity);
+}
+
+function colorWithOpacity(color, opacity) {
+  const named = {black: '0,0,0', white: '255,255,255', yellow: '250,204,21', red: '239,68,68'};
+  const clean = String(color || 'black').trim().toLowerCase();
+  if (clean.startsWith('#') && (clean.length === 4 || clean.length === 7)) {
+    const hex = clean.length === 4
+      ? clean.slice(1).split('').map(ch => ch + ch).join('')
+      : clean.slice(1);
+    const value = parseInt(hex, 16);
+    return `rgba(${(value >> 16) & 255},${(value >> 8) & 255},${value & 255},${opacity})`;
+  }
+  return `rgba(${named[clean] || named.black},${opacity})`;
+}
+
+function activeClipsAt(time) {
+  return projectData.tracks.flatMap(track => {
+    if (track.muted) return [];
+    return track.clips
+      .filter(clip => clipEnabled(clip) && time >= clip.start_time && time <= clip.start_time + clip.duration)
+      .map(clip => ({clip, track}));
+  }).sort((a, b) => (a.track.sort_order || 0) - (b.track.sort_order || 0) || (a.clip.z_index || 0) - (b.clip.z_index || 0));
+}
+
+function activeVisualSignature(time = playheadTime) {
+  return activeClipsAt(time)
+    .filter(({clip}) => ['video', 'image', 'text'].includes(clip.clip_type))
+    .map(({clip, track}) => `${track.id}:${clip.id}:${clip.start_time}:${clip.duration}`)
+    .join('|');
+}
+
+function firstVisibleClipTime() {
+  const clips = allClips()
+    .filter(clip => clipEnabled(clip) && ['video', 'image', 'text'].includes(clip.clip_type))
+    .sort((a, b) => Number(a.start_time || 0) - Number(b.start_time || 0));
+  return clips.length ? Math.max(0, Number(clips[0].start_time || 0)) : 0;
+}
+
+function clipEnabled(clip) {
+  return (clip.params || {}).enabled !== false;
+}
+
+function createPreviewMedia(clip, fillStage = false) {
+  const asset = clip.asset;
+  if (!asset?.url) return null;
+  const media = document.createElement(clip.clip_type === 'image' ? 'img' : 'video');
+  media.className = fillStage ? 'preview-fill-media' : 'preview-layer-media';
+  media.dataset.clipId = clip.id;
+  if (clip.clip_type === 'image') {
+    media.src = asset.url;
+    media.alt = clip.name || asset.name || '';
+  } else {
+    media.src = asset.url;
+    media.muted = true;
+    media.playsInline = true;
+    media.preload = 'metadata';
+    const params = clip.params || {};
+    media.playbackRate = Number(params.speed || 1);
+    const syncFrame = () => {
+      syncVideoElementToPlayhead(media, clip);
+      if (isPlaying) media.play().catch(() => {});
+    };
+    media.addEventListener('loadedmetadata', syncFrame, {once: true});
+    media.addEventListener('canplay', syncFrame, {once: true});
+    if (media.readyState >= 1) syncFrame();
+  }
+  return media;
+}
+
+function syncVideoElementToPlayhead(video, clip) {
+  const params = clip.params || {};
+  const speed = Number(params.speed || 1);
+  const offset = Math.max(0, (playheadTime - clip.start_time) * speed + (clip.source_start || 0));
+  if (!Number.isFinite(video.duration)) return;
+  const nextTime = Math.min(Math.max(0, offset), Math.max(0, video.duration - 0.05));
+  if (Math.abs(video.currentTime - nextTime) > 0.05) video.currentTime = nextTime;
+}
+
+function positionPreviewLayer(layer, clip) {
+  const params = clip.params || {};
+  const canvas = projectData.canvas || {width: 1080, height: 1920};
+  const keyframe = previewKeyframeTransform(clip);
+  const x = keyframe.x;
+  const y = keyframe.y;
+  const width = keyframe.width;
+  layer.style.left = `${x / canvas.width * 100}%`;
+  layer.style.top = `${y / canvas.height * 100}%`;
+  layer.style.width = `${width / canvas.width * 100}%`;
+  layer.style.opacity = params.opacity ?? 1;
+  const borderWidth = Math.max(0, Number(params.overlay_border_width || 0));
+  const shadow = Math.max(0, Math.min(1, Number(params.overlay_shadow || 0)));
+  layer.style.boxSizing = 'border-box';
+  layer.style.border = borderWidth > 0 ? `${borderWidth}px solid ${params.overlay_border_color || '#ffffff'}` : '0';
+  layer.style.boxShadow = shadow > 0 ? `0 ${8 + shadow * 14}px ${18 + shadow * 28}px rgba(0, 0, 0, ${0.18 + shadow * 0.42})` : 'none';
+  layer.style.mixBlendMode = previewBlendMode(params.overlay_blend_mode);
+  applyPreviewTransform(layer, params);
+}
+
+function previewBlendMode(mode) {
+  const map = {
+    normal: 'normal',
+    screen: 'screen',
+    multiply: 'multiply',
+    lighten: 'lighten',
+    darken: 'darken',
+    addition: 'plus-lighter',
+    overlay: 'overlay',
+    softlight: 'soft-light'
+  };
+  return map[mode || 'normal'] || 'normal';
+}
+
+function previewKeyframeTransform(clip) {
+  const params = clip.params || {};
+  const startX = Number(params.x ?? 0);
+  const startY = Number(params.y ?? 0);
+  const startWidth = Number(params.width ?? 420);
+  if (!params.keyframe_enabled) return {x: startX, y: startY, width: startWidth};
+  const frames = normalizedTransformKeyframes(clip);
+  if (frames.length > 1) {
+    const localTime = clamp(playheadTime - clip.start_time, 0, Math.max(0.2, clip.duration || 0.2));
+    let previous = frames[0];
+    for (const next of frames.slice(1)) {
+      if (localTime <= next.time) {
+        const progress = clamp((localTime - previous.time) / Math.max(0.001, next.time - previous.time), 0, 1);
+        return {
+          x: previous.x + (next.x - previous.x) * progress,
+          y: previous.y + (next.y - previous.y) * progress,
+          width: previous.width + (next.width - previous.width) * progress
+        };
+      }
+      previous = next;
+    }
+    return frames[frames.length - 1];
+  }
+  const progress = clamp((playheadTime - clip.start_time) / Math.max(0.2, clip.duration || 0.2), 0, 1);
+  const endX = Number(params.keyframe_end_x ?? startX);
+  const endY = Number(params.keyframe_end_y ?? startY);
+  const endWidth = Number(params.keyframe_end_width ?? startWidth);
+  return {
+    x: startX + (endX - startX) * progress,
+    y: startY + (endY - startY) * progress,
+    width: startWidth + (endWidth - startWidth) * progress
+  };
+}
+
+function normalizedTransformKeyframes(clip) {
+  const params = clip.params || {};
+  const duration = Math.max(0.2, Number(clip.duration || 0.2));
+  const frames = [{time: 0, x: Number(params.x ?? 0), y: Number(params.y ?? 0), width: Number(params.width ?? 420)}];
+  if (Array.isArray(params.keyframes)) {
+    params.keyframes.forEach(item => {
+      if (!item || typeof item !== 'object') return;
+      frames.push({
+        time: clamp(Number(item.time || 0), 0, duration),
+        x: Number(item.x ?? params.x ?? 0),
+        y: Number(item.y ?? params.y ?? 0),
+        width: Math.max(40, Number(item.width ?? params.width ?? 420))
+      });
+    });
+  }
+  const byTime = new Map();
+  frames.forEach(item => byTime.set(Number(item.time.toFixed(3)), item));
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
+function previewPointToCanvas(event, stage) {
+  const rect = stage.getBoundingClientRect();
+  const canvas = projectData.canvas || {width: 1080, height: 1920};
+  return {
+    x: (event.clientX - rect.left) / rect.width * canvas.width,
+    y: (event.clientY - rect.top) / rect.height * canvas.height
+  };
+}
+
+function beginPreviewDrag(event, layer, clip) {
+  if (event.button !== 0 || isClipLocked(clip)) return;
+  selectClip(clip);
+  layer = document.querySelector(`#previewPane .preview-layer[data-clip-id="${clip.id}"]`) || layer;
+  const stage = layer.closest('.jy-preview-stage');
+  if (!stage) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const params = clip.params || {};
+  const point = previewPointToCanvas(event, stage);
+  previewDragState = {
+    clip,
+    layer,
+    stage,
+    startX: Number(params.x ?? 0),
+    startY: Number(params.y ?? 0),
+    pointerX: point.x,
+    pointerY: point.y,
+    next: null
+  };
+  layer.classList.add('is-dragging');
+}
+
+function beginPreviewResize(event, layer, clip) {
+  if (event.button !== 0 || isClipLocked(clip)) return;
+  selectClip(clip);
+  layer = document.querySelector(`#previewPane .preview-layer[data-clip-id="${clip.id}"]`) || layer;
+  const stage = layer.closest('.jy-preview-stage');
+  if (!stage) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const params = clip.params || {};
+  const point = previewPointToCanvas(event, stage);
+  previewDragState = {
+    mode: 'resize',
+    clip,
+    layer,
+    stage,
+    startWidth: Number(params.width ?? 420),
+    pointerX: point.x,
+    next: null
+  };
+  layer.classList.add('is-dragging');
+}
+
+function angleFromCenter(point, center) {
+  return Math.atan2(point.y - center.y, point.x - center.x) * 180 / Math.PI;
+}
+
+function normalizeRotation(value) {
+  let next = ((value + 180) % 360 + 360) % 360 - 180;
+  if (next === -180) next = 180;
+  return Math.round(next);
+}
+
+function beginPreviewRotate(event, layer, clip) {
+  if (event.button !== 0 || isClipLocked(clip)) return;
+  selectClip(clip);
+  layer = document.querySelector(`#previewPane .preview-layer[data-clip-id="${clip.id}"]`) || layer;
+  const stage = layer.closest('.jy-preview-stage');
+  if (!stage) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const params = clip.params || {};
+  const canvas = projectData.canvas || {width: 1080, height: 1920};
+  const point = previewPointToCanvas(event, stage);
+  const width = Number(params.width ?? 420);
+  const layerRect = layer.getBoundingClientRect();
+  const stageRect = stage.getBoundingClientRect();
+  const height = layerRect.height / stageRect.height * canvas.height;
+  const center = {
+    x: Number(params.x ?? 0) + width / 2,
+    y: Number(params.y ?? 0) + height / 2
+  };
+  previewDragState = {
+    mode: 'rotate',
+    clip,
+    layer,
+    stage,
+    startRotation: Number(params.rotation || 0),
+    startAngle: angleFromCenter(point, center),
+    center,
+    next: null
+  };
+  layer.classList.add('is-dragging');
+}
+
+function updatePreviewDrag(event) {
+  if (!previewDragState) return;
+  const {clip, layer, stage, pointerX} = previewDragState;
+  const canvas = projectData.canvas || {width: 1080, height: 1920};
+  const point = previewPointToCanvas(event, stage);
+  const params = clip.params || {};
+  if (previewDragState.mode === 'resize') {
+    const nextWidth = Math.max(40, Math.min(canvas.width * 2, previewDragState.startWidth + point.x - pointerX));
+    previewDragState.next = {width: Math.round(nextWidth)};
+    document.getElementById('clipWidth').value = previewDragState.next.width;
+    positionPreviewLayer(layer, {...clip, params: {...params, ...previewDragState.next}});
+    return;
+  }
+  if (previewDragState.mode === 'rotate') {
+    const angle = angleFromCenter(point, previewDragState.center);
+    const nextRotation = normalizeRotation(previewDragState.startRotation + angle - previewDragState.startAngle);
+    previewDragState.next = {rotation: nextRotation};
+    document.getElementById('clipRotation').value = nextRotation;
+    positionPreviewLayer(layer, {...clip, params: {...params, ...previewDragState.next}});
+    return;
+  }
+  const {startX, startY, pointerY} = previewDragState;
+  const width = Number(params.width ?? 420);
+  const nextX = Math.max(-width, Math.min(canvas.width, startX + point.x - pointerX));
+  const nextY = Math.max(-canvas.height, Math.min(canvas.height, startY + point.y - pointerY));
+  previewDragState.next = {x: Math.round(nextX), y: Math.round(nextY)};
+  document.getElementById('clipX').value = previewDragState.next.x;
+  document.getElementById('clipY').value = previewDragState.next.y;
+  positionPreviewLayer(layer, {...clip, params: {...params, ...previewDragState.next}});
+}
+
+async function finishPreviewDrag() {
+  if (!previewDragState) return;
+  const state = previewDragState;
+  previewDragState = null;
+  state.layer.classList.remove('is-dragging');
+  if (state.next) {
+    await updateClipFromState(state.clip, state.next);
+    await refreshProject();
+  }
+}
+
+function applyPreviewTransform(element, params) {
+  const rotation = Number(params.rotation || 0);
+  const flipX = params.flip_x ? -1 : 1;
+  const flipY = params.flip_y ? -1 : 1;
+  element.style.transformOrigin = 'center center';
+  element.style.transform = `rotate(${rotation}deg) scale(${flipX}, ${flipY})`;
+  element.style.filter = previewFilter(params);
+  applyPreviewCrop(element, params);
+}
+
+function previewFilter(params) {
+  const preset = params.filter_preset || 'none';
+  const contrast = Number(params.contrast ?? 1);
+  const saturation = Number(params.saturation ?? 1);
+  const brightness = 1 + Number(params.brightness ?? 0);
+  const filters = [`contrast(${contrast})`, `saturate(${saturation})`, `brightness(${brightness})`];
+  if (preset === 'mono') filters.push('grayscale(1)');
+  if (preset === 'cinematic') filters.push('contrast(1.12)', 'saturate(0.9)', 'sepia(0.12)');
+  if (preset === 'warm') filters.push('sepia(0.18)', 'saturate(1.08)');
+  if (preset === 'cool') filters.push('hue-rotate(190deg)', 'saturate(0.9)');
+  if (preset === 'vivid') filters.push('contrast(1.12)', 'saturate(1.35)');
+  if (preset === 'soft') filters.push('blur(0.7px)', 'brightness(1.05)');
+  const blur = Number(params.blur || 0);
+  if (blur > 0) filters.push(`blur(${blur}px)`);
+  return filters.join(' ');
+}
+
+function cropPercent(params, key) {
+  return Math.max(0, Math.min(45, Number(params[key] || 0) * 100));
+}
+
+function applyPreviewCrop(element, params) {
+  const mask = params.mask_type || 'none';
+  if (mask === 'circle') {
+    element.style.clipPath = 'circle(50% at 50% 50%)';
+    return;
+  }
+  if (mask === 'ellipse') {
+    element.style.clipPath = 'ellipse(50% 50% at 50% 50%)';
+    return;
+  }
+  if (mask === 'left_half') {
+    element.style.clipPath = 'inset(0 50% 0 0)';
+    return;
+  }
+  if (mask === 'right_half') {
+    element.style.clipPath = 'inset(0 0 0 50%)';
+    return;
+  }
+  if (mask === 'top_half') {
+    element.style.clipPath = 'inset(0 0 50% 0)';
+    return;
+  }
+  if (mask === 'bottom_half') {
+    element.style.clipPath = 'inset(50% 0 0 0)';
+    return;
+  }
+  const top = cropPercent(params, 'crop_top');
+  const right = cropPercent(params, 'crop_right');
+  const bottom = cropPercent(params, 'crop_bottom');
+  const left = cropPercent(params, 'crop_left');
+  element.style.clipPath = `inset(${top}% ${right}% ${bottom}% ${left}%)`;
+}
+
+function renderTimelineCompositePreview() {
+  const pane = document.getElementById('previewPane');
+  const active = activeClipsAt(playheadTime);
+  const visual = active.filter(({clip}) => ['video', 'image', 'text'].includes(clip.clip_type));
+  previewSignature = activeVisualSignature(playheadTime);
+  pane.innerHTML = '';
+  const stage = document.createElement('div');
+  stage.className = 'jy-preview-stage is-composite';
+  if (!visual.length) {
+    const empty = document.createElement('span');
+    empty.className = 'jy-preview-empty';
+    empty.textContent = '当前时间点没有可见画面';
+    stage.appendChild(empty);
+    pane.appendChild(stage);
+    resizePreviewStage();
+    return;
+  }
+
+  const main = visual.find(({track, clip}) => track.track_type === 'video' && ['video', 'image'].includes(clip.clip_type))
+    || visual.find(({clip}) => ['video', 'image'].includes(clip.clip_type));
+  if (main) {
+    const media = createPreviewMedia(main.clip, true);
+    if (media) {
+      const mainWrap = document.createElement('div');
+      mainWrap.className = 'preview-fill-layer';
+      mainWrap.dataset.clipId = main.clip.id;
+      applyPreviewTransform(mainWrap, main.clip.params || {});
+      mainWrap.appendChild(media);
+      stage.appendChild(mainWrap);
+    }
+  }
+
+  visual.forEach(({clip, track}) => {
+    if (main?.clip.id === clip.id) return;
+    const layer = document.createElement('div');
+    layer.className = `preview-layer clip-${clip.clip_type}`;
+    layer.dataset.clipId = clip.id;
+    if (clip.clip_type === 'text') {
+      const params = clip.params || {};
+      layer.textContent = params.text || clip.name || '输入文字';
+      layer.style.color = params.color || 'white';
+      layer.style.fontSize = `${Math.max(12, Number(params.font_size || 54) / 54 * 18)}px`;
+      layer.style.opacity = params.opacity ?? 1;
+      layer.style.webkitTextStroke = `${params.stroke_width ?? 2}px ${params.stroke_color || 'black'}`;
+      layer.style.textShadow = `${params.shadow_x ?? 0}px ${params.shadow_y ?? 2}px 8px rgba(0,0,0,.75)`;
+      layer.style.background = textBoxBackground(params);
+    } else if (track.track_type === 'overlay' || track.track_type === 'video') {
+      const media = createPreviewMedia(clip, false);
+      if (media) layer.appendChild(media);
+      positionPreviewLayer(layer, clip);
+    }
+    if (clip.clip_type === 'text') positionPreviewLayer(layer, {...clip, params: {...(clip.params || {}), width: clip.params?.width || 760}});
+    layer.addEventListener('mousedown', event => beginPreviewDrag(event, layer, clip));
+    const resizeHandle = document.createElement('span');
+    resizeHandle.className = 'preview-resize-handle';
+    resizeHandle.addEventListener('mousedown', event => beginPreviewResize(event, layer, clip));
+    layer.appendChild(resizeHandle);
+    const rotateHandle = document.createElement('span');
+    rotateHandle.className = 'preview-rotate-handle';
+    rotateHandle.addEventListener('mousedown', event => beginPreviewRotate(event, layer, clip));
+    layer.appendChild(rotateHandle);
+    stage.appendChild(layer);
+  });
+
+  pane.appendChild(stage);
+  resizePreviewStage();
+  syncPreviewVideos();
+}
+
+function selectClip(clip, options = {}) {
+  selectedClip = clip;
+  selectedClipId = clip.id;
+  if (options.preserveMulti) selectedClipIds.add(clip.id);
+  else selectedClipIds = linkedSelectionEnabled && !options.skipLinked ? linkedClipIdsFor(clip) : new Set([clip.id]);
+  selectedAsset = clip.asset;
+  document.querySelector('.jy-inspector')?.classList.add('is-editing-clip');
+  setPlayhead(clip.start_time, false);
+  renderTimelineCompositePreview();
+  syncSelectedClipClasses();
+  const params = clip.params || {};
+  document.getElementById('clipId').value = clip.id;
+  document.getElementById('clipName').value = clip.name || '片段';
+  document.getElementById('clipEnabled').checked = params.enabled !== false;
+  document.getElementById('clipLocked').checked = Boolean(params.locked);
+  document.getElementById('clipStart').value = clip.start_time;
+  document.getElementById('clipDuration').value = clip.duration;
+  document.getElementById('clipSourceStart').value = clip.source_start ?? 0;
+  document.getElementById('clipFitMode').value = params.fit_mode ?? 'contain';
+  document.getElementById('clipBackgroundColor').value = params.background_color ?? '#000000';
+  document.getElementById('clipZ').value = clip.z_index || 0;
+  document.getElementById('clipX').value = params.x ?? 80;
+  document.getElementById('clipY').value = params.y ?? 120;
+  document.getElementById('clipWidth').value = params.width ?? 420;
+  document.getElementById('clipOpacity').value = params.opacity ?? 1;
+  document.getElementById('clipVolume').value = params.volume ?? 1;
+  document.getElementById('clipKeyframeEnabled').checked = Boolean(params.keyframe_enabled);
+  document.getElementById('clipKeyframeEndX').value = params.keyframe_end_x ?? params.x ?? 80;
+  document.getElementById('clipKeyframeEndY').value = params.keyframe_end_y ?? params.y ?? 120;
+  document.getElementById('clipKeyframeEndWidth').value = params.keyframe_end_width ?? params.width ?? 420;
+  renderKeyframeList(clip);
+  document.getElementById('clipOverlayBorderWidth').value = params.overlay_border_width ?? 0;
+  document.getElementById('clipOverlayBorderColor').value = params.overlay_border_color ?? '#ffffff';
+  document.getElementById('clipOverlayShadow').value = params.overlay_shadow ?? 0;
+  document.getElementById('clipOverlayBlendMode').value = params.overlay_blend_mode ?? 'normal';
+  document.getElementById('clipAudioEnabled').checked = params.audio_enabled !== false;
+  document.getElementById('clipVolumeStart').value = params.volume_start ?? params.volume ?? 1;
+  document.getElementById('clipVolumeEnd').value = params.volume_end ?? params.volume ?? 1;
+  document.getElementById('clipDenoise').checked = Boolean(params.denoise);
+  document.getElementById('clipLoudnessNormalize').checked = Boolean(params.loudness_normalize);
+  document.getElementById('clipAudioChannelMode').value = params.audio_channel_mode ?? 'stereo';
+  document.getElementById('clipAudioPan').value = params.audio_pan ?? 0;
+  document.getElementById('clipAudioOffset').value = params.audio_offset ?? 0;
+  document.getElementById('clipAudioDuckingEnabled').checked = Boolean(params.audio_ducking_enabled);
+  document.getElementById('clipAudioDuckingLevel').value = params.audio_ducking_level ?? 0.35;
+  document.getElementById('clipAudioDuckingAttack').value = params.audio_ducking_attack ?? 0.15;
+  document.getElementById('clipAudioDuckingRelease').value = params.audio_ducking_release ?? 0.35;
+  document.getElementById('clipVocalIsolationEnabled').checked = Boolean(params.vocal_isolation_enabled);
+  document.getElementById('clipVocalIsolationStrength').value = params.vocal_isolation_strength ?? 0.7;
+  document.getElementById('clipSpeed').value = params.speed ?? 1;
+  document.getElementById('clipSpeedCurve').value = params.speed_curve ?? 'none';
+  document.getElementById('clipRotation').value = params.rotation ?? 0;
+  document.getElementById('clipFlipX').checked = Boolean(params.flip_x);
+  document.getElementById('clipFlipY').checked = Boolean(params.flip_y);
+  document.getElementById('clipReverse').checked = Boolean(params.reverse);
+  document.getElementById('clipCropLeft').value = params.crop_left ?? 0;
+  document.getElementById('clipCropRight').value = params.crop_right ?? 0;
+  document.getElementById('clipCropTop').value = params.crop_top ?? 0;
+  document.getElementById('clipCropBottom').value = params.crop_bottom ?? 0;
+  document.getElementById('clipMotionPreset').value = params.motion_preset ?? 'none';
+  document.getElementById('clipMotionIntensity').value = params.motion_intensity ?? 0.08;
+  document.getElementById('clipMaskType').value = params.mask_type ?? 'none';
+  document.getElementById('clipFilterPreset').value = params.filter_preset ?? 'none';
+  document.getElementById('clipContrast').value = params.contrast ?? 1;
+  document.getElementById('clipSaturation').value = params.saturation ?? 1;
+  document.getElementById('clipBrightness').value = params.brightness ?? 0;
+  document.getElementById('clipBlur').value = params.blur ?? 0;
+  document.getElementById('clipSharpen').value = params.sharpen ?? 0;
+  document.getElementById('clipChromaEnabled').checked = Boolean(params.chroma_enabled);
+  document.getElementById('clipChromaColor').value = params.chroma_color ?? '#00ff00';
+  document.getElementById('clipChromaSimilarity').value = params.chroma_similarity ?? 0.18;
+  document.getElementById('clipChromaBlend').value = params.chroma_blend ?? 0.08;
+  document.getElementById('clipText').value = params.text ?? clip.name ?? '';
+  document.getElementById('clipFontSize').value = params.font_size ?? 54;
+  document.getElementById('clipColor').value = params.color ?? 'white';
+  document.getElementById('clipStrokeWidth').value = params.stroke_width ?? 2;
+  document.getElementById('clipStrokeColor').value = params.stroke_color ?? 'black';
+  document.getElementById('clipShadowX').value = params.shadow_x ?? 0;
+  document.getElementById('clipShadowY').value = params.shadow_y ?? 2;
+  document.getElementById('clipBoxColor').value = params.box_color ?? 'black';
+  document.getElementById('clipBoxOpacity').value = params.box_opacity ?? 0.34;
+  document.getElementById('clipFadeIn').value = params.fade_in ?? 0;
+  document.getElementById('clipFadeOut').value = params.fade_out ?? 0;
+  document.getElementById('clipAnimationIn').value = params.animation_in ?? 'none';
+  document.getElementById('clipAnimationInDuration').value = params.animation_in_duration ?? 0.4;
+  document.getElementById('clipAnimationOut').value = params.animation_out ?? 'none';
+  document.getElementById('clipAnimationOutDuration').value = params.animation_out_duration ?? 0.4;
+  document.getElementById('clipTransition').value = params.transition ?? 'none';
+  document.getElementById('clipTransitionDuration').value = params.transition_duration ?? 0;
+  document.querySelector('.jy-text-fields').classList.toggle('is-visible', clip.clip_type === 'text');
+}
+
+function renderKeyframeList(clip) {
+  const list = document.getElementById('keyframeList');
+  if (!list) return;
+  const frames = Array.isArray(clip.params?.keyframes) ? [...clip.params.keyframes].sort((a, b) => Number(a.time || 0) - Number(b.time || 0)) : [];
+  if (!frames.length) {
+    list.innerHTML = '<span>暂无关键帧</span>';
+    return;
+  }
+  list.innerHTML = frames.map((item, index) => `
+    <button type="button" data-keyframe-index="${index}" title="跳到关键帧">
+      <b>${formatTimecode(Number(item.time || 0)).slice(3, 8)}</b>
+      <em>X ${Math.round(Number(item.x || 0))} / Y ${Math.round(Number(item.y || 0))} / W ${Math.round(Number(item.width || 0))}</em>
+    </button>
+  `).join('');
+  list.querySelectorAll('[data-keyframe-index]').forEach(button => {
+    button.addEventListener('click', () => {
+      const frame = frames[Number(button.dataset.keyframeIndex || 0)];
+      if (frame) setPlayhead(Number(clip.start_time || 0) + Number(frame.time || 0));
+    });
+  });
+}
+
+function toggleClipMultiSelection(clip) {
+  const id = Number(clip.id);
+  if (selectedClipIds.has(id)) {
+    selectedClipIds.delete(id);
+    if (!selectedClipIds.size) {
+      clearClipSelection();
+      return;
+    }
+    const fallback = findClipById([...selectedClipIds].at(-1));
+    if (fallback) selectClip(fallback, {preserveMulti: true});
+    syncSelectedClipClasses();
+    return;
+  }
+  selectClip(clip, {preserveMulti: true});
+}
+
+function hideClipContextMenu() {
+  const menu = document.getElementById('clipContextMenu');
+  if (!menu) return;
+  menu.hidden = true;
+  contextMenuClipId = null;
+}
+
+function showClipContextMenu(event, clip) {
+  event.preventDefault();
+  event.stopPropagation();
+  const keepGroup = selectedClipIds.size > 1 && selectedClipIds.has(Number(clip.id));
+  selectClip(clip, {preserveMulti: keepGroup});
+  const lane = event.target.closest('.timeline-lane');
+  if (lane) {
+    const pointTime = timeFromLanePoint(event.clientX, lane);
+    if (pointTime > clip.start_time && pointTime < clip.start_time + clip.duration) {
+      setPlayhead(pointTime, false);
+    }
+  }
+  contextMenuClipId = clip.id;
+  const menu = document.getElementById('clipContextMenu');
+  if (!menu) return;
+  const lockButton = menu.querySelector('[data-context-action="lock"]');
+  if (lockButton) {
+    lockButton.innerHTML = `<i data-lucide="${clip.params?.locked ? 'unlock-keyhole' : 'lock-keyhole'}"></i><span>${clip.params?.locked ? '解锁片段' : '锁定片段'}</span>`;
+  }
+  const enabledButton = menu.querySelector('[data-context-action="toggle-enabled"]');
+  if (enabledButton) {
+    enabledButton.innerHTML = `<i data-lucide="${clipEnabled(clip) ? 'eye-off' : 'eye'}"></i><span>${clipEnabled(clip) ? '禁用片段' : '启用片段'}</span>`;
+  }
+  const pasteAttrsButton = menu.querySelector('[data-context-action="paste-attrs"]');
+  if (pasteAttrsButton) pasteAttrsButton.disabled = !clipboardClipAttrs;
+  const showFileButton = menu.querySelector('[data-context-action="show-file"]');
+  if (showFileButton) showFileButton.disabled = !clip.asset?.url;
+  const replaceButton = menu.querySelector('[data-context-action="replace-asset"]');
+  if (replaceButton) replaceButton.disabled = !canReplaceClipWithAsset(clip, selectedAsset);
+  const editTextButton = menu.querySelector('[data-context-action="edit-text"]');
+  if (editTextButton) editTextButton.disabled = clip.clip_type !== 'text';
+  const detachButton = menu.querySelector('[data-context-action="detach"]');
+  if (detachButton) detachButton.disabled = clip.clip_type !== 'video' || !clip.asset;
+  const isolateButton = menu.querySelector('[data-context-action="isolate-vocal"]');
+  if (isolateButton) isolateButton.disabled = !['video', 'audio'].includes(clip.clip_type) || !clip.asset;
+  menu.hidden = false;
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - rect.width - 10, Math.max(10, event.clientX));
+  const top = Math.min(window.innerHeight - rect.height - 10, Math.max(10, event.clientY));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  lucide.createIcons();
+}
+
+async function runClipContextAction(action) {
+  const clip = findClipById(contextMenuClipId) || selectedClip || findClipById(selectedClipId);
+  if (!clip) return;
+  selectedClip = clip;
+  selectedClipId = clip.id;
+  if (action === 'split') await splitSelectedClip();
+  if (action === 'copy') copySelectedClip();
+  if (action === 'cut') await cutSelectedClip();
+  if (action === 'copy-attrs') clipboardClipAttrs = copyClipAttributes(clip);
+  if (action === 'paste-attrs') await applyClipboardAttributesToCurrentClip();
+  if (action === 'save-preset') await saveSelectedClipPreset();
+  if (action === 'duplicate') {
+    copySelectedClip();
+    await duplicateSelectedClip();
+  }
+  if (action === 'detach') await detachSelectedAudio();
+  if (action === 'isolate-vocal') await isolateSelectedVocal();
+  if (action === 'lock') await toggleSelectedClipLock();
+  if (action === 'toggle-enabled') await toggleSelectedClipEnabled();
+  if (action === 'edit-text') await editTextClipInline(clip);
+  if (action === 'snap-previous') await snapSelectedClipToPrevious();
+  if (action === 'freeze-frame') await freezeSelectedClip();
+  if (action === 'replace-asset') await replaceSelectedClipAsset(selectedAsset);
+  if (action === 'delete') await deleteSelectedClip();
+  if (action === 'ripple-delete') await rippleDeleteSelectedClip();
+  if (action === 'export-selected') await exportSelectedClip();
+  if (action === 'show-file') showSelectedClipFile();
+}
+
+function beginTimelineClipMove(event, clip, lane, item, track) {
+  if (event.button !== 0 || isClipLocked(clip) || event.target.closest('.trim-handle, .clip-delete, .clip-edit-text')) return;
+  if (event.shiftKey || event.metaKey || event.ctrlKey) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const previousShowEmptyTracks = showEmptyTimelineTracks;
+  let groupMove = selectedClipIds.size > 1 && selectedClipIds.has(Number(clip.id));
+  if (groupMove) {
+    selectedClip = clip;
+    selectedClipId = clip.id;
+    syncSelectedClipClasses();
+  } else {
+    selectClip(clip);
+    groupMove = selectedClipIds.size > 1 && selectedClipIds.has(Number(clip.id));
+  }
+  if (!showEmptyTimelineTracks && projectData.tracks.some(itemTrack => compatibleTrackForClip(itemTrack, clip) && !(itemTrack.clips || []).length)) {
+    showEmptyTimelineTracks = true;
+    renderTimeline();
+    item = timelineClipElement(clip.id) || item;
+    lane = item?.closest('.timeline-lane') || lane;
+    track = findTrackById(lane?.dataset.trackId) || track;
+  }
+  draggedAsset = null;
+  draggedClip = null;
+  const groupItems = groupMove
+    ? selectedClipIdList()
+        .map(id => findClipById(id))
+        .filter(Boolean)
+        .map(item => ({clip: item, startTime: Number(item.start_time || 0), duration: Number(item.duration || 0), element: timelineClipElement(item.id)}))
+    : [];
+  if (groupMove && groupItems.some(groupItem => isClipLocked(groupItem.clip))) return;
+  timelineDragState = {
+    clip,
+    lane,
+    item,
+    groupMove,
+    groupItems,
+    trackId: track.id,
+    targetTrackId: track.id,
+    targetLane: lane,
+    previousShowEmptyTracks,
+    startClientX: event.clientX,
+    startTime: Number(clip.start_time || 0),
+    duration: Number(clip.duration || 0),
+    next: null
+  };
+  if (groupMove) groupItems.forEach(groupItem => groupItem.element?.classList.add('is-timeline-moving'));
+  else item.classList.add('is-timeline-moving');
+  document.body.classList.add('is-timeline-dragging');
+}
+
+function updateTimelineClipMove(event) {
+  if (!timelineDragState) return;
+  const state = timelineDragState;
+  if (state.groupMove) {
+    const delta = timeDeltaFromPixels(event.clientX - state.startClientX);
+    const minStart = Math.min(...state.groupItems.map(item => item.startTime));
+    const boundedDelta = Math.max(-minStart, delta);
+    const nextDelta = snapEnabled ? Math.round(boundedDelta * 2) / 2 : Math.round(boundedDelta * 10) / 10;
+    state.groupItems.forEach(groupItem => {
+      const nextStart = Math.max(0, groupItem.startTime + nextDelta);
+      if (groupItem.element) paintTimelineClip(groupItem.element, nextStart, groupItem.duration);
+    });
+    document.getElementById('clipStart').value = Math.max(0, state.startTime + nextDelta).toFixed(1);
+    state.next = {delta: nextDelta};
+    return;
+  }
+  const targetLane = timelineMoveTargetLane(event, state.clip) || state.lane;
+  state.targetLane?.classList.remove('is-move-target');
+  state.targetLane = targetLane;
+  state.targetLane.classList.add('is-move-target');
+  state.targetTrackId = Number(targetLane.dataset.trackId || state.trackId);
+  const delta = targetLane === state.lane
+    ? timeDeltaFromPixels(event.clientX - state.startClientX)
+    : timeFromLanePoint(event.clientX, targetLane) - state.startTime;
+  const nextStart = Math.max(0, snapTime(state.startTime + delta));
+  paintTimelineClip(state.item, nextStart, state.duration);
+  document.getElementById('clipStart').value = nextStart.toFixed(1);
+  state.next = {start_time: nextStart, track_id: state.targetTrackId};
+}
+
+async function finishTimelineClipMove() {
+  if (!timelineDragState) return;
+  const state = timelineDragState;
+  timelineDragState = null;
+  if (state.groupMove) state.groupItems.forEach(groupItem => groupItem.element?.classList.remove('is-timeline-moving'));
+  else state.item.classList.remove('is-timeline-moving');
+  state.targetLane?.classList.remove('is-move-target');
+  document.body.classList.remove('is-timeline-dragging');
+  if (state.groupMove) {
+    if (state.next && Math.abs(state.next.delta || 0) >= 0.01) {
+      const ids = state.groupItems.map(item => item.clip.id);
+      const result = await apiPost(`/api/editor/project/${projectId}/clips/move`, {
+        clip_ids: ids.join(','),
+        delta: state.next.delta
+      });
+      selectedClipIds = new Set(ids);
+      selectedClipId = state.clip.id;
+      applyProjectResponse(result);
+    } else {
+      state.groupItems.forEach(groupItem => {
+        if (groupItem.element) paintTimelineClip(groupItem.element, groupItem.startTime, groupItem.duration);
+      });
+    }
+    if (!state.previousShowEmptyTracks) {
+      showEmptyTimelineTracks = false;
+      renderTimeline();
+    }
+    return;
+  }
+  const movedTrack = state.next && Number(state.next.track_id) !== Number(state.trackId);
+  const movedTime = state.next && Math.abs(state.next.start_time - state.startTime) >= 0.01;
+  if (state.next && (movedTrack || movedTime)) {
+    const result = await apiPost(`/api/editor/clip/${state.clip.id}/move`, {
+      track_id: state.next.track_id,
+      start_time: state.next.start_time
+    });
+    selectedClipId = result.clip_id || state.clip.id;
+    applyProjectResponse(result);
+  } else {
+    paintTimelineClip(state.item, state.startTime, state.duration);
+  }
+  if (!state.previousShowEmptyTracks) {
+    showEmptyTimelineTracks = false;
+    renderTimeline();
+  }
+}
+
+function timelineMoveTargetLane(event, clip) {
+  const element = document.elementFromPoint(event.clientX, event.clientY);
+  const lane = element?.closest?.('.timeline-lane');
+  if (!lane) return null;
+  const track = findTrackById(lane.dataset.trackId);
+  if (!track || track.locked || !compatibleTrackForClip(track, clip)) return null;
+  return lane;
+}
+
+function beginTimelineTrim(event, clip, edge, lane, item) {
+  event.preventDefault();
+  event.stopPropagation();
+  selectClip(clip);
+  timelineDragState = null;
+  trimState = {
+    clip,
+    edge,
+    lane,
+    item,
+    startTime: Number(clip.start_time || 0),
+    duration: Number(clip.duration || 0),
+    sourceStart: Number(clip.source_start || 0),
+    next: null
+  };
+  item.classList.add('is-timeline-trimming');
+  document.body.classList.add('is-trimming');
+}
+
+function updateTimelineTrim(event) {
+  if (!trimState) return;
+  const {edge, lane, item, startTime, duration, sourceStart} = trimState;
+  const time = timeFromLanePoint(event.clientX, lane);
+  if (edge === 'left') {
+    const maxStart = startTime + duration - 0.2;
+    const nextStart = Math.max(0, Math.min(time, maxStart));
+    const nextDuration = duration - (nextStart - startTime);
+    const nextSourceStart = sourceStart + (nextStart - startTime);
+    paintTimelineClip(item, nextStart, nextDuration);
+    document.getElementById('clipStart').value = nextStart.toFixed(1);
+    document.getElementById('clipDuration').value = nextDuration.toFixed(1);
+    document.getElementById('clipSourceStart').value = Math.max(0, nextSourceStart).toFixed(1);
+    trimState.next = {start_time: nextStart, duration: nextDuration, source_start: Math.max(0, nextSourceStart)};
+    return;
+  }
+  const nextEnd = Math.max(startTime + 0.2, time);
+  const nextDuration = nextEnd - startTime;
+  paintTimelineClip(item, startTime, nextDuration);
+  document.getElementById('clipDuration').value = nextDuration.toFixed(1);
+  trimState.next = {duration: nextDuration};
+}
+
+async function finishTimelineTrim() {
+  if (!trimState) return;
+  const state = trimState;
+  trimState = null;
+  state.item.classList.remove('is-timeline-trimming');
+  document.body.classList.remove('is-trimming');
+  if (state.next) {
+    await updateClipFromState(state.clip, {
+      ...state.next,
+      ripple_trim: rippleInsertEnabled && state.edge === 'right' ? 'true' : ''
+    });
+    await refreshProject();
+  } else {
+    paintTimelineClip(state.item, state.startTime, state.duration);
+  }
+}
+
+function beginTimelineSelection(event) {
+  if (event.button !== 0 || event.target.closest('.timeline-clip, .track-toggle, .track-action, .track-drag-handle')) return;
+  const board = document.getElementById('timeline');
+  if (!board.contains(event.target)) return;
+  hideClipContextMenu();
+  selectionBoxState = {
+    startX: event.clientX,
+    startY: event.clientY,
+    currentX: event.clientX,
+    currentY: event.clientY,
+    additive: event.shiftKey || event.metaKey || event.ctrlKey,
+    startedIds: new Set(selectedClipIds),
+    active: false
+  };
+}
+
+function updateTimelineSelection(event) {
+  if (!selectionBoxState) return;
+  selectionBoxState.currentX = event.clientX;
+  selectionBoxState.currentY = event.clientY;
+  const movement = Math.hypot(event.clientX - selectionBoxState.startX, event.clientY - selectionBoxState.startY);
+  if (!selectionBoxState.active && movement < 5) return;
+  selectionBoxState.active = true;
+  const box = document.getElementById('timelineSelectionBox');
+  const panel = document.querySelector('.jy-timeline-panel');
+  const panelRect = panel.getBoundingClientRect();
+  const rect = normalizeRect(selectionBoxState.startX, selectionBoxState.startY, event.clientX, event.clientY);
+  box.hidden = false;
+  box.style.left = `${rect.left - panelRect.left}px`;
+  box.style.top = `${rect.top - panelRect.top}px`;
+  box.style.width = `${rect.width}px`;
+  box.style.height = `${rect.height}px`;
+  const ids = [];
+  document.querySelectorAll('.timeline-clip').forEach(element => {
+    if (rectsIntersect(rect, element.getBoundingClientRect())) ids.push(Number(element.dataset.clipId));
+  });
+  selectedClipIds = selectionBoxState.additive ? new Set([...selectionBoxState.startedIds, ...ids]) : new Set(ids);
+  selectedClipId = ids[0] || [...selectedClipIds][0] || null;
+  selectedClip = selectedClipId ? findClipById(selectedClipId) : null;
+  syncSelectedClipClasses();
+}
+
+function finishTimelineSelection() {
+  if (!selectionBoxState) return false;
+  const state = selectionBoxState;
+  selectionBoxState = null;
+  document.getElementById('timelineSelectionBox').hidden = true;
+  if (!state.active) return false;
+  suppressTimelineClick = true;
+  const clip = selectedClipId ? findClipById(selectedClipId) : null;
+  if (clip) selectClip(clip, {preserveMulti: true});
+  else if (!state.additive) clearClipSelection();
+  return true;
+}
+
+function beginTrackReorderDrag(event, track, row) {
+  if (!event.target.closest('.track-drag-handle')) {
+    event.preventDefault();
+    return;
+  }
+  hideClipContextMenu();
+  clearClipSelection();
+  trackDragState = {trackId: Number(track.id), row};
+  row.classList.add('is-track-dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', `track:${track.id}`);
+}
+
+function updateTrackReorderDrag(event, row) {
+  if (!trackDragState || draggedAsset || timelineDragState) return;
+  const targetId = Number(row.dataset.trackId || 0);
+  if (!targetId || targetId === trackDragState.trackId) return;
+  event.preventDefault();
+  document.querySelectorAll('.timeline-track.is-drop-before, .timeline-track.is-drop-after').forEach(item => {
+    item.classList.remove('is-drop-before', 'is-drop-after');
+  });
+  const rect = row.getBoundingClientRect();
+  const after = event.clientY > rect.top + rect.height / 2;
+  row.classList.toggle('is-drop-before', !after);
+  row.classList.toggle('is-drop-after', after);
+  event.dataTransfer.dropEffect = 'move';
+}
+
+function clearTrackDropHint(event, row) {
+  if (event.currentTarget.contains(event.relatedTarget)) return;
+  row.classList.remove('is-drop-before', 'is-drop-after');
+}
+
+async function finishTrackReorderDrop(event, row) {
+  if (!trackDragState) return;
+  const targetId = Number(row.dataset.trackId || 0);
+  if (!targetId || targetId === trackDragState.trackId) return;
+  event.preventDefault();
+  const rect = row.getBoundingClientRect();
+  const insertAfter = event.clientY > rect.top + rect.height / 2;
+  const ids = projectData.tracks.map(track => Number(track.id)).filter(id => id !== trackDragState.trackId);
+  const targetIndex = ids.indexOf(targetId);
+  ids.splice(targetIndex + (insertAfter ? 1 : 0), 0, trackDragState.trackId);
+  const result = await apiPost(`/api/editor/project/${projectId}/tracks/reorder`, {track_ids: ids.join(',')});
+  selectedClipId = null;
+  selectedClip = null;
+  applyProjectResponse(result);
+  clearTrackReorderDrag();
+}
+
+function clearTrackReorderDrag() {
+  trackDragState = null;
+  document.querySelectorAll('.timeline-track.is-track-dragging, .timeline-track.is-drop-before, .timeline-track.is-drop-after').forEach(row => {
+    row.classList.remove('is-track-dragging', 'is-drop-before', 'is-drop-after');
+  });
+}
+
+function visibleTimelineTracks() {
+  const tracks = [...(projectData.tracks || [])].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || a.id - b.id);
+  if (showEmptyTimelineTracks || assetPointerDragState?.active || timelineDragState) return tracks;
+  const visible = tracks.filter(track => (track.clips || []).length);
+  if (visible.length) return visible;
+  const primary = tracks.find(track => track.track_type === 'video') || tracks[0];
+  return primary ? [primary] : [];
+}
+
+function renderTimeline() {
+  const board = document.getElementById('timeline');
+  board.innerHTML = '';
+  const duration = timelineDuration();
+  const laneWidth = timelineLaneWidth();
+  board.style.setProperty('--timeline-lane-width', `${laneWidth}px`);
+  board.style.setProperty('--timeline-second-width', `${pixelsPerSecond()}px`);
+  const clipToRestore = selectedClipId ? findClipById(selectedClipId) : null;
+  const tracksToRender = visibleTimelineTracks();
+  board.classList.toggle('is-hiding-empty-tracks', !showEmptyTimelineTracks);
+  tracksToRender.forEach(track => {
+    const row = document.createElement('div');
+    row.className = 'timeline-track';
+    row.dataset.trackId = track.id;
+    row.draggable = true;
+    row.classList.toggle('is-locked', track.locked);
+    row.classList.toggle('is-muted', track.muted);
+    row.classList.toggle('is-empty', !(track.clips || []).length);
+    row.innerHTML = `
+      <div class="timeline-track-head">
+        <button class="track-drag-handle" type="button" title="上下拖动轨道"><i data-lucide="grip-vertical"></i></button>
+        <span class="track-kind" title="${track.name}">${trackIconLabel(track.track_type)}</span>
+        <button class="track-toggle" data-field="muted" title="静音"><i data-lucide="${track.muted ? 'volume-x' : 'volume-2'}"></i></button>
+        <button class="track-toggle" data-field="locked" title="锁定"><i data-lucide="${track.locked ? 'lock' : 'unlock'}"></i></button>
+        ${track.track_type === 'text' ? '<button class="track-action" data-action="add-text" title="在播放头添加字幕"><i data-lucide="type"></i></button>' : ''}
+        <button class="track-action" data-action="compact" title="整理轨道空隙"><i data-lucide="move-left"></i></button>
+        <button class="track-action" data-action="rename" title="重命名轨道"><i data-lucide="pencil"></i></button>
+        <button class="track-action track-danger" data-action="delete" title="删除轨道"><i data-lucide="trash-2"></i></button>
+      </div>
+      <div class="timeline-lane" data-track-id="${track.id}" data-track-type="${track.track_type}"></div>`;
+    const lane = row.querySelector('.timeline-lane');
+    row.addEventListener('dragstart', event => beginTrackReorderDrag(event, track, row));
+    row.addEventListener('dragover', event => updateTrackReorderDrag(event, row));
+    row.addEventListener('dragleave', event => clearTrackDropHint(event, row));
+    row.addEventListener('drop', async event => finishTrackReorderDrop(event, row));
+    row.addEventListener('dragend', clearTrackReorderDrag);
+    track.clips.forEach(clip => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `timeline-clip clip-${clip.clip_type}`;
+      item.dataset.clipId = clip.id;
+      item.draggable = false;
+      item.style.left = `${Math.max(0, clip.start_time / duration * 100)}%`;
+      item.style.width = `${Math.max(5, clip.duration / duration * 100)}%`;
+      item.classList.toggle('is-selected', selectedClipIds.has(clip.id) || selectedClipId === clip.id);
+      item.classList.toggle('is-locked', isClipLocked(clip));
+      item.classList.toggle('is-disabled', !clipEnabled(clip));
+      const leftHandle = document.createElement('span');
+      leftHandle.className = 'trim-handle trim-left';
+      leftHandle.dataset.edge = 'left';
+      const label = document.createElement('span');
+      label.className = 'clip-label';
+      label.textContent = clip.name;
+      const quickDelete = document.createElement('span');
+      quickDelete.className = 'clip-delete';
+      quickDelete.title = isClipLocked(clip) ? '片段已锁定' : '删除片段';
+      quickDelete.innerHTML = `<i data-lucide="${isClipLocked(clip) ? 'lock' : 'x'}"></i>`;
+      const quickEditText = document.createElement('span');
+      quickEditText.className = 'clip-edit-text';
+      quickEditText.title = '编辑字幕';
+      quickEditText.innerHTML = '<i data-lucide="pencil"></i>';
+      const rightHandle = document.createElement('span');
+      rightHandle.className = 'trim-handle trim-right';
+      rightHandle.dataset.edge = 'right';
+      item.append(leftHandle);
+      if (['audio', 'sfx'].includes(clip.clip_type) || ['audio', 'sfx'].includes(track.track_type)) {
+        const waveform = document.createElement('span');
+        waveform.className = 'clip-waveform';
+        const waveformUrl = clip.asset?.waveform_url || clip.asset?.preview_url || '';
+        if (waveformUrl) waveform.style.backgroundImage = `url("${waveformUrl}")`;
+        item.append(waveform);
+      }
+      if (Array.isArray(clip.params?.keyframes)) {
+        clip.params.keyframes.forEach(frame => {
+          const dot = document.createElement('span');
+          dot.className = 'clip-keyframe-dot';
+          dot.style.left = `${clamp(Number(frame.time || 0) / Math.max(0.2, Number(clip.duration || 0.2)) * 100, 0, 100)}%`;
+          item.append(dot);
+        });
+      }
+      item.append(label);
+      if (clip.clip_type === 'text') item.append(quickEditText);
+      item.append(quickDelete, rightHandle);
+      item.addEventListener('click', event => {
+        event.stopPropagation();
+        hideClipContextMenu();
+        if (event.shiftKey || event.metaKey || event.ctrlKey) toggleClipMultiSelection(clip);
+        else selectClip(clip);
+      });
+      item.addEventListener('contextmenu', event => {
+        showClipContextMenu(event, clip);
+      });
+      item.addEventListener('dblclick', async event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (clip.clip_type === 'text') await editTextClipInline(clip);
+      });
+      quickDelete.addEventListener('click', async event => {
+        event.preventDefault();
+        event.stopPropagation();
+        hideClipContextMenu();
+        const keepGroup = selectedClipIds.size > 1 && selectedClipIds.has(Number(clip.id));
+        selectClip(clip, {preserveMulti: keepGroup});
+        if (isClipLocked(clip)) return;
+        await deleteSelectedClip();
+      });
+      quickEditText.addEventListener('click', async event => {
+        event.preventDefault();
+        event.stopPropagation();
+        await editTextClipInline(clip);
+      });
+      item.querySelectorAll('.trim-handle').forEach(handle => {
+        handle.addEventListener('mousedown', event => {
+          if (isClipLocked(clip)) return;
+          beginTimelineTrim(event, clip, handle.dataset.edge, lane, item);
+        });
+      });
+      item.addEventListener('mousedown', event => {
+        beginTimelineClipMove(event, clip, lane, item, track);
+      });
+      lane.appendChild(item);
+    });
+    lane.addEventListener('dragover', event => {
+      event.preventDefault();
+      if (draggedAsset && !compatibleTrack(track, draggedAsset)) {
+        lane.classList.add('is-drop-blocked');
+        event.dataTransfer.dropEffect = 'none';
+        return;
+      }
+      if (!track.locked) lane.classList.add('is-drop-target');
+      event.dataTransfer.dropEffect = draggedAsset ? 'copy' : 'move';
+    });
+    lane.addEventListener('dragleave', () => lane.classList.remove('is-drop-target', 'is-drop-blocked'));
+    lane.addEventListener('drop', async event => {
+      event.preventDefault();
+      lane.classList.remove('is-drop-target', 'is-drop-blocked');
+      if (track.locked) return;
+      const start = dropTime(event, lane, duration);
+      if (draggedAsset && compatibleTrack(track, draggedAsset)) {
+        await addAssetToTrack(track, draggedAsset, start);
+      } else if (draggedClip && !isClipLocked(draggedClip)) {
+        await moveClipToTime(draggedClip, start);
+        await refreshProject();
+      }
+      draggedAsset = null;
+      draggedClip = null;
+    });
+    lane.addEventListener('dblclick', async event => {
+      if (track.locked) return;
+      const start = dropTime(event, lane, duration);
+      if (track.track_type === 'text') {
+        await addTextClip(start);
+        return;
+      }
+      if (!selectedAsset) return;
+      await addAssetToTrack(track, selectedAsset, start);
+    });
+    lane.addEventListener('click', event => {
+      if (event.target.closest('.timeline-clip')) return;
+      if (suppressTimelineClick) {
+        suppressTimelineClick = false;
+        return;
+      }
+      hideClipContextMenu();
+      setPlayhead(dropTime(event, lane, duration));
+    });
+    row.querySelectorAll('.track-toggle').forEach(button => {
+      button.addEventListener('click', async () => {
+        await apiPost(`/api/editor/track/${track.id}/toggle`, {field: button.dataset.field});
+        await refreshProject();
+      });
+    });
+    row.querySelector('[data-action="rename"]')?.addEventListener('click', async event => {
+      event.stopPropagation();
+      await renameTrack(track);
+    });
+    row.querySelector('[data-action="compact"]')?.addEventListener('click', async event => {
+      event.stopPropagation();
+      await compactTrack(track);
+    });
+    row.querySelector('[data-action="add-text"]')?.addEventListener('click', async event => {
+      event.stopPropagation();
+      if (!track.locked) await addTextClip(playheadTime);
+    });
+    row.querySelector('[data-action="delete"]')?.addEventListener('click', async event => {
+      event.stopPropagation();
+      await deleteTrack(track);
+    });
+    board.appendChild(row);
+  });
+  lucide.createIcons();
+  syncEmptyTracksButton();
+  renderRuler();
+  updatePlayhead();
+  if (clipToRestore) selectClip(clipToRestore, {preserveMulti: selectedClipIds.size > 1});
+  else if (selectedClipId) clearClipSelection();
+}
+
+function trackIconLabel(type) {
+  if (type === 'text') return 'T';
+  if (type === 'audio') return '♪';
+  if (type === 'sfx') return 'S';
+  if (type === 'overlay') return '▣';
+  return '▶';
+}
+
+function syncEmptyTracksButton() {
+  const button = document.getElementById('toggleEmptyTracksBtn');
+  if (!button) return;
+  const hiddenCount = (projectData.tracks || []).filter(track => !(track.clips || []).length).length;
+  button.classList.toggle('is-active', showEmptyTimelineTracks);
+  button.title = showEmptyTimelineTracks ? '隐藏空轨道' : `显示空轨道${hiddenCount ? ` (${hiddenCount})` : ''}`;
+}
+
+function dropTime(event, lane, duration) {
+  return timeFromLanePoint(event.clientX, lane);
+}
+
+async function updateClipFromState(clip, overrides = {}) {
+  const params = clip.params || {};
+  await apiPost(`/api/editor/clip/${clip.id}/update`, {
+    name: overrides.name ?? clip.name ?? '片段',
+    enabled: overrides.enabled ?? params.enabled ?? true,
+    locked: overrides.locked ?? params.locked ?? false,
+    start_time: overrides.start_time ?? clip.start_time,
+    duration: overrides.duration ?? clip.duration,
+    source_start: overrides.source_start ?? clip.source_start ?? 0,
+    fit_mode: overrides.fit_mode ?? params.fit_mode ?? 'contain',
+    background_color: overrides.background_color ?? params.background_color ?? '#000000',
+    z_index: overrides.z_index ?? clip.z_index ?? 0,
+    x: overrides.x ?? params.x ?? 80,
+    y: overrides.y ?? params.y ?? 120,
+    width: overrides.width ?? params.width ?? 420,
+    keyframe_enabled: overrides.keyframe_enabled ?? params.keyframe_enabled ?? false,
+    keyframe_end_x: overrides.keyframe_end_x ?? params.keyframe_end_x ?? params.x ?? 80,
+    keyframe_end_y: overrides.keyframe_end_y ?? params.keyframe_end_y ?? params.y ?? 120,
+    keyframe_end_width: overrides.keyframe_end_width ?? params.keyframe_end_width ?? params.width ?? 420,
+    keyframes: overrides.keyframes ?? JSON.stringify(params.keyframes || []),
+    overlay_border_width: overrides.overlay_border_width ?? params.overlay_border_width ?? 0,
+    overlay_border_color: overrides.overlay_border_color ?? params.overlay_border_color ?? '#ffffff',
+    overlay_shadow: overrides.overlay_shadow ?? params.overlay_shadow ?? 0,
+    overlay_blend_mode: overrides.overlay_blend_mode ?? params.overlay_blend_mode ?? 'normal',
+    opacity: overrides.opacity ?? params.opacity ?? 1,
+    volume: overrides.volume ?? params.volume ?? 1,
+    volume_start: overrides.volume_start ?? params.volume_start ?? params.volume ?? 1,
+    volume_end: overrides.volume_end ?? params.volume_end ?? params.volume ?? 1,
+    audio_enabled: overrides.audio_enabled ?? params.audio_enabled ?? true,
+    denoise: overrides.denoise ?? params.denoise ?? false,
+    loudness_normalize: overrides.loudness_normalize ?? params.loudness_normalize ?? false,
+    audio_channel_mode: overrides.audio_channel_mode ?? params.audio_channel_mode ?? 'stereo',
+    audio_pan: overrides.audio_pan ?? params.audio_pan ?? 0,
+    audio_offset: overrides.audio_offset ?? params.audio_offset ?? 0,
+    audio_ducking_enabled: overrides.audio_ducking_enabled ?? params.audio_ducking_enabled ?? false,
+    audio_ducking_level: overrides.audio_ducking_level ?? params.audio_ducking_level ?? 0.35,
+    audio_ducking_attack: overrides.audio_ducking_attack ?? params.audio_ducking_attack ?? 0.15,
+    audio_ducking_release: overrides.audio_ducking_release ?? params.audio_ducking_release ?? 0.35,
+    vocal_isolation_enabled: overrides.vocal_isolation_enabled ?? params.vocal_isolation_enabled ?? false,
+    vocal_isolation_strength: overrides.vocal_isolation_strength ?? params.vocal_isolation_strength ?? 0.7,
+    speed: overrides.speed ?? params.speed ?? 1,
+    speed_curve: overrides.speed_curve ?? params.speed_curve ?? 'none',
+    rotation: overrides.rotation ?? params.rotation ?? 0,
+    flip_x: overrides.flip_x ?? params.flip_x ?? false,
+    flip_y: overrides.flip_y ?? params.flip_y ?? false,
+    reverse: overrides.reverse ?? params.reverse ?? false,
+    crop_left: overrides.crop_left ?? params.crop_left ?? 0,
+    crop_right: overrides.crop_right ?? params.crop_right ?? 0,
+    crop_top: overrides.crop_top ?? params.crop_top ?? 0,
+    crop_bottom: overrides.crop_bottom ?? params.crop_bottom ?? 0,
+    motion_preset: overrides.motion_preset ?? params.motion_preset ?? 'none',
+    motion_intensity: overrides.motion_intensity ?? params.motion_intensity ?? 0.08,
+    mask_type: overrides.mask_type ?? params.mask_type ?? 'none',
+    filter_preset: overrides.filter_preset ?? params.filter_preset ?? 'none',
+    contrast: overrides.contrast ?? params.contrast ?? 1,
+    saturation: overrides.saturation ?? params.saturation ?? 1,
+    brightness: overrides.brightness ?? params.brightness ?? 0,
+    blur: overrides.blur ?? params.blur ?? 0,
+    sharpen: overrides.sharpen ?? params.sharpen ?? 0,
+    chroma_enabled: overrides.chroma_enabled ?? params.chroma_enabled ?? false,
+    chroma_color: overrides.chroma_color ?? params.chroma_color ?? '#00ff00',
+    chroma_similarity: overrides.chroma_similarity ?? params.chroma_similarity ?? 0.18,
+    chroma_blend: overrides.chroma_blend ?? params.chroma_blend ?? 0.08,
+    transition: overrides.transition ?? params.transition ?? 'none',
+    transition_duration: overrides.transition_duration ?? params.transition_duration ?? 0,
+    text: overrides.text ?? params.text ?? clip.name ?? '',
+    font_size: overrides.font_size ?? params.font_size ?? 54,
+    color: overrides.color ?? params.color ?? 'white',
+    stroke_width: overrides.stroke_width ?? params.stroke_width ?? 2,
+    stroke_color: overrides.stroke_color ?? params.stroke_color ?? 'black',
+    shadow_x: overrides.shadow_x ?? params.shadow_x ?? 0,
+    shadow_y: overrides.shadow_y ?? params.shadow_y ?? 2,
+    box_color: overrides.box_color ?? params.box_color ?? 'black',
+    box_opacity: overrides.box_opacity ?? params.box_opacity ?? 0.34,
+    fade_in: overrides.fade_in ?? params.fade_in ?? 0,
+    fade_out: overrides.fade_out ?? params.fade_out ?? 0,
+    animation_in: overrides.animation_in ?? params.animation_in ?? 'none',
+    animation_in_duration: overrides.animation_in_duration ?? params.animation_in_duration ?? 0.4,
+    animation_out: overrides.animation_out ?? params.animation_out ?? 'none',
+    animation_out_duration: overrides.animation_out_duration ?? params.animation_out_duration ?? 0.4,
+    ripple_trim: overrides.ripple_trim ?? ''
+  });
+}
+
+function recommendedTrackType(asset) {
+  if (!asset) return 'overlay';
+  if (asset.asset_type === 'video') return 'video';
+  if (asset.asset_type === 'audio') return 'audio';
+  if (asset.asset_type === 'sfx') return 'sfx';
+  return 'overlay';
+}
+
+function compatibleTrack(track, asset) {
+  if (!track || !asset) return false;
+  if (['video', 'image'].includes(asset.asset_type)) return ['video', 'overlay'].includes(track.track_type);
+  if (asset.asset_type === 'audio') return track.track_type === 'audio';
+  if (asset.asset_type === 'sfx') return track.track_type === 'sfx';
+  return false;
+}
+
+function compatibleTrackForClip(track, clip) {
+  if (['video', 'image'].includes(clip.clip_type)) return ['video', 'overlay'].includes(track.track_type);
+  if (clip.clip_type === 'text') return track.track_type === 'text';
+  if (['audio', 'sfx'].includes(clip.clip_type)) return ['audio', 'sfx'].includes(track.track_type);
+  return false;
+}
+
+function clipTypeForAsset(asset) {
+  return asset?.asset_type === 'sfx' ? 'audio' : asset?.asset_type;
+}
+
+function canReplaceClipWithAsset(clip, asset) {
+  if (!clip || !asset || clip.clip_type === 'text') return false;
+  const nextType = clipTypeForAsset(asset);
+  const track = projectData.tracks.find(item => item.clips.some(trackClip => trackClip.id === clip.id));
+  if (!track) return false;
+  if (['video', 'image'].includes(nextType)) return ['video', 'overlay'].includes(track.track_type);
+  if (['audio', 'sfx'].includes(nextType)) return ['audio', 'sfx'].includes(track.track_type);
+  return false;
+}
+
+async function addAssetToTrack(track, asset, startTime, durationOverride = null) {
+  if (track.locked) return;
+  const target = compatibleTrack(track, asset)
+    ? track
+    : projectData.tracks.find(item => item.track_type === recommendedTrackType(asset)) || track;
+  if (target.locked) return;
+  const defaultDuration = asset.asset_type === 'sfx' ? 1.2 : asset.asset_type === 'image' ? 5 : asset.asset_type === 'audio' ? 8 : 6;
+  const result = await apiPost(`/api/editor/project/${projectId}/clip`, {
+    track_id: target.id,
+    asset_id: asset.id,
+    start_time: startTime,
+    duration: durationOverride || defaultDuration,
+    ripple_insert: rippleInsertEnabled ? 'true' : ''
+  });
+  selectedClipId = result.clip_id || null;
+  setPlayhead(startTime, false);
+  applyProjectResponse(result);
+}
+
+function beginAssetPointerDrag(event, item) {
+  if (event.button !== undefined && event.button !== 0) return;
+  if (event.target.closest('.asset-delete, .asset-add, .asset-replace')) return;
+  event.preventDefault();
+  const asset = JSON.parse(item.dataset.asset);
+  assetPointerDragState = {
+    asset,
+    item,
+    pointerId: event.pointerId,
+    previousShowEmptyTracks: showEmptyTimelineTracks,
+    startX: event.clientX,
+    startY: event.clientY,
+    lastX: event.clientX,
+    lastY: event.clientY,
+    active: false
+  };
+  item.setPointerCapture?.(event.pointerId);
+}
+
+function updateAssetPointerDrag(event) {
+  const state = assetPointerDragState;
+  if (!state) return;
+  state.lastX = event.clientX;
+  state.lastY = event.clientY;
+  const movement = Math.hypot(event.clientX - state.startX, event.clientY - state.startY);
+  if (!state.active && movement < 6) return;
+  event.preventDefault();
+  if (!state.active) {
+    state.active = true;
+    if (!showEmptyTimelineTracks) {
+      showEmptyTimelineTracks = true;
+      renderTimeline();
+    }
+    createAssetDragGhost(state);
+  }
+  draggedAsset = state.asset;
+  document.body.classList.add('is-asset-dragging');
+  moveAssetDragGhost(event.clientX, event.clientY);
+  document.querySelectorAll('.timeline-lane.is-drop-target, .timeline-lane.is-drop-blocked').forEach(lane => {
+    lane.classList.remove('is-drop-target', 'is-drop-blocked');
+  });
+  const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.timeline-lane');
+  if (lane) {
+    const track = findTrackById(lane.dataset.trackId);
+    if (track && !track.locked && compatibleTrack(track, state.asset)) lane.classList.add('is-drop-target');
+    else if (track && !track.locked) lane.classList.add('is-drop-blocked');
+  }
+}
+
+async function finishAssetPointerDrag(event) {
+  const state = assetPointerDragState;
+  assetPointerDragState = null;
+  removeAssetDragGhost();
+  document.body.classList.remove('is-asset-dragging');
+  document.querySelectorAll('.timeline-lane.is-drop-target, .timeline-lane.is-drop-blocked').forEach(lane => {
+    lane.classList.remove('is-drop-target', 'is-drop-blocked');
+  });
+  draggedAsset = null;
+  if (!state?.active) return;
+  suppressAssetClick = true;
+  setTimeout(() => {
+    suppressAssetClick = false;
+  }, 160);
+  let changed = false;
+  const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.timeline-lane');
+  if (lane) {
+    const track = findTrackById(lane.dataset.trackId);
+    if (track && !track.locked && compatibleTrack(track, state.asset)) {
+      const start = dropTime({clientX: event.clientX}, lane, timelineDuration());
+      await addAssetToTrack(track, state.asset, start);
+      changed = true;
+    }
+  }
+  if (!state.previousShowEmptyTracks) {
+    showEmptyTimelineTracks = false;
+    renderTimeline();
+  } else if (!changed) {
+    renderTimeline();
+  }
+}
+
+function createAssetDragGhost(state) {
+  removeAssetDragGhost();
+  assetDragGhost = document.createElement('div');
+  assetDragGhost.className = 'asset-drag-ghost';
+  assetDragGhost.textContent = state.asset?.name || '素材';
+  document.body.appendChild(assetDragGhost);
+}
+
+function moveAssetDragGhost(x, y) {
+  if (!assetDragGhost) return;
+  assetDragGhost.style.left = `${x + 12}px`;
+  assetDragGhost.style.top = `${y + 12}px`;
+}
+
+function removeAssetDragGhost() {
+  assetDragGhost?.remove();
+  assetDragGhost = null;
+}
+
+
+async function moveClipToTime(clip, startTime) {
+  if (isClipLocked(clip)) return;
+  await updateClipFromState(clip, {start_time: startTime});
+}
+
+async function editTextClipInline(clip = selectedClip || findClipById(selectedClipId)) {
+  if (!clip || clip.clip_type !== 'text' || isClipLocked(clip)) return;
+  selectClip(clip, {skipLinked: true});
+  const input = document.getElementById('clipText');
+  input?.focus();
+  input?.select();
+}
+
+async function toggleSelectedClipLock() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isTrackLockedForClip(clip)) return;
+  const nextLocked = !Boolean(clip.params?.locked);
+  await updateClipFromState(clip, {locked: nextLocked ? 'true' : 'false'});
+  selectedClipId = clip.id;
+  await refreshProject();
+}
+
+async function toggleSelectedClipEnabled() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  const nextEnabled = clipEnabled(clip) ? 'false' : 'true';
+  await updateClipFromState(clip, {enabled: nextEnabled});
+  selectedClipId = clip.id;
+  await refreshProject();
+}
+
+async function renameTrack(track) {
+  if (!track) return;
+  const nextName = await requestEditorName({title: '轨道名称', value: track.name || '轨道'});
+  if (nextName === null) return;
+  applyProjectResponse(await apiPost(`/api/editor/track/${track.id}/update`, {name: nextName.trim() || track.name || '轨道'}));
+}
+
+async function deleteTrack(track) {
+  if (!track || track.locked) return;
+  const clipIds = new Set((track.clips || []).map(clip => Number(clip.id)));
+  const result = await apiPost(`/api/editor/track/${track.id}/delete`);
+  if (clipIds.has(Number(selectedClipId))) {
+    clearClipSelection();
+    renderPreview(null);
+  }
+  selectedClipIds = new Set([...selectedClipIds].filter(id => !clipIds.has(Number(id))));
+  applyProjectResponse(result);
+}
+
+async function compactTrack(track) {
+  if (!track || track.locked) return;
+  const result = await apiPost(`/api/editor/track/${track.id}/compact`);
+  applyProjectResponse(result);
+  if (selectedClipId) {
+    selectedClip = findClipById(selectedClipId);
+    renderPreview(selectedClip);
+  }
+}
+
+async function addTextClip(startTime = playheadTime) {
+  const canvas = projectCanvas();
+  const width = Math.min(760, Math.max(320, Math.round((canvas.width || 1080) * 0.72)));
+  const result = await apiPost(`/api/editor/project/${projectId}/text-clip`, {
+    text: '输入文字',
+    start_time: Math.max(0, startTime),
+    duration: 4,
+    x: Math.max(32, Math.round(((canvas.width || 1080) - width) / 2)),
+    y: Math.max(80, Math.round((canvas.height || 1920) * 0.72)),
+    width,
+    font_size: 54,
+    color: 'white'
+  });
+  selectedClipId = result.clip_id || null;
+  setPlayhead(Math.max(0, startTime), false);
+  applyProjectResponse(result);
+}
+
+async function addStickerClip(key) {
+  const preset = stickerPresets[key];
+  if (!preset) return;
+  const canvas = projectCanvas();
+  const width = Math.max(180, Math.round((canvas.width || 1080) * preset.width_ratio));
+  const result = await apiPost(`/api/editor/project/${projectId}/text-clip`, {
+    text: preset.text,
+    start_time: Math.max(0, playheadTime),
+    duration: 3,
+    x: Math.max(20, Math.round(((canvas.width || 1080) - width) / 2)),
+    y: Math.max(60, Math.round((canvas.height || 1920) * 0.24)),
+    width,
+    font_size: preset.font_size,
+    color: preset.color,
+    stroke_width: preset.stroke_width,
+    stroke_color: preset.stroke_color,
+    shadow_x: 0,
+    shadow_y: 3,
+    box_color: preset.box_color,
+    box_opacity: preset.box_opacity
+  });
+  selectedClipId = result.clip_id || null;
+  setPlayhead(Math.max(0, playheadTime), false);
+  applyProjectResponse(result);
+}
+
+async function applyEffectPreset(key) {
+  const preset = effectPresets[key];
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!preset || !clip || isClipLocked(clip)) return;
+  await updateClipFromState(clip, preset);
+  selectedClipId = clip.id;
+  await refreshProject();
+}
+
+async function applyTransitionPreset(key) {
+  const preset = transitionPresets[key];
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!preset || !clip || isClipLocked(clip)) return;
+  document.getElementById('clipTransition').value = preset.transition;
+  document.getElementById('clipTransitionDuration').value = preset.transition_duration;
+  await updateClipFromState(clip, preset);
+  selectedClipId = clip.id;
+  await refreshProject();
+}
+
+async function refreshProject() {
+  projectData = await fetch(`/api/editor/project/${projectId}`).then(res => res.json());
+  syncProjectCanvasControls();
+  renderTimeline();
+}
+
+function applyProjectResponse(result) {
+  if (result.project) {
+    projectData = result.project;
+    selectedClip = selectedClipId ? findClipById(selectedClipId) : null;
+    syncProjectCanvasControls();
+    renderTimeline();
+  }
+}
+
+async function deleteSelectedClip() {
+  const ids = selectedClipIdList();
+  if (ids.length > 1) {
+    await apiPost(`/api/editor/project/${projectId}/clips/delete`, {clip_ids: ids.join(',')});
+    clearClipSelection();
+    renderPreview(null);
+    await refreshProject();
+    return;
+  }
+  const clip = selectedClip || findClipById(selectedClipId || document.getElementById('clipId').value);
+  if (!clip) return;
+  if (isClipLocked(clip)) return;
+  await apiPost(`/api/editor/clip/${clip.id}/delete`);
+  clearClipSelection();
+  renderPreview(null);
+  await refreshProject();
+}
+
+async function rippleDeleteSelectedClip() {
+  const clip = selectedClip || findClipById(selectedClipId || document.getElementById('clipId').value);
+  if (!clip) return;
+  if (isClipLocked(clip)) return;
+  await apiPost(`/api/editor/clip/${clip.id}/ripple-delete`);
+  clearClipSelection();
+  renderPreview(null);
+  await refreshProject();
+}
+
+async function snapSelectedClipToPrevious() {
+  const clip = selectedClip || findClipById(selectedClipId || document.getElementById('clipId').value);
+  if (!clip) return;
+  if (isClipLocked(clip)) return;
+  applyProjectResponse(await apiPost(`/api/editor/clip/${clip.id}/snap-to-previous`));
+  selectedClipId = clip.id;
+  selectedClip = findClipById(clip.id);
+  syncSelectedClipClasses();
+  syncProjectCanvasControls();
+  renderPreview(selectedClip);
+}
+
+async function addMarkerAtPlayhead() {
+  const fallback = `标记 ${formatTimecode(playheadTime).slice(3, 8)}`;
+  const label = await requestEditorName({title: '标记名称', value: fallback});
+  if (label === null) return;
+  applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/marker`, {
+    time: playheadTime,
+    label: label.trim() || fallback
+  }));
+}
+
+async function deleteMarker(markerId) {
+  if (!markerId) return;
+  applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/marker/${markerId}/delete`));
+}
+
+async function splitSelectedClip() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip) {
+    applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/split-at`, {split_time: playheadTime}));
+    return;
+  }
+  if (isClipLocked(clip)) return;
+  const inside = playheadTime > clip.start_time + 0.05 && playheadTime < clip.start_time + clip.duration - 0.05;
+  const split = inside ? playheadTime : clip.start_time + clip.duration / 2;
+  const result = await apiPost(`/api/editor/clip/${clip.id}/split`, {split_time: split});
+  selectedClipId = result.clip_id || clip.id;
+  await refreshProject();
+}
+
+async function replaceSelectedClipAsset(asset = selectedAsset) {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip) return;
+  if (!asset) {
+    alert('请先选择一个素材');
+    return;
+  }
+  if (isClipLocked(clip)) return;
+  if (!canReplaceClipWithAsset(clip, asset)) {
+    alert('素材类型不能替换到当前片段所在轨道');
+    return;
+  }
+  const result = await apiPost(`/api/editor/clip/${clip.id}/replace-asset`, {
+    asset_id: asset.id,
+    keep_timing: 'true'
+  });
+  selectedClipId = result.clip_id || clip.id;
+  selectedAsset = result.asset || asset;
+  applyProjectResponse(result);
+  selectedClip = findClipById(selectedClipId);
+  syncSelectedClipClasses();
+  renderPreview(selectedClip || selectedAsset);
+}
+
+async function freezeSelectedClip() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  if (clip.clip_type !== 'video' || !clip.asset) {
+    alert('请选择视频片段生成定格帧');
+    return;
+  }
+  const freezeTime = clamp(playheadTime, Number(clip.start_time || 0), Number(clip.start_time || 0) + Number(clip.duration || 0));
+  try {
+    const result = await apiPost(`/api/editor/clip/${clip.id}/freeze-frame`, {
+      time: freezeTime,
+      duration: 2
+    });
+    selectedClipId = result.clip_id || clip.id;
+    if (result.asset) selectedAsset = result.asset;
+    applyProjectResponse(result);
+    selectedClip = findClipById(selectedClipId);
+    syncSelectedClipClasses();
+    renderPreview(selectedClip || result.asset || null);
+  } catch (error) {
+    console.warn('生成定格帧失败', error);
+    alert('生成定格帧失败，请确认 FFmpeg 可用且源视频文件存在');
+  }
+}
+
+async function duplicateSelectedClip(startTime = null) {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return null;
+  const result = await apiPost(`/api/editor/clip/${clip.id}/duplicate`);
+  selectedClipId = result.clip_id || clip.id;
+  await refreshProject();
+  const duplicate = findClipById(selectedClipId);
+  if (duplicate && startTime !== null) {
+    await updateClipFromState(duplicate, {start_time: Math.max(0, startTime)});
+    await refreshProject();
+  }
+  return selectedClipId;
+}
+
+async function detachSelectedAudio() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  if (clip.clip_type !== 'video' || !clip.asset) {
+    alert('请选择带原声的视频片段');
+    return;
+  }
+  const result = await apiPost(`/api/editor/clip/${clip.id}/detach-audio`);
+  selectedClipId = result.clip_id || clip.id;
+  applyProjectResponse(result);
+}
+
+async function isolateSelectedVocal() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  if (!['video', 'audio'].includes(clip.clip_type) || !clip.asset) {
+    alert('请选择视频或音频片段');
+    return;
+  }
+  const result = await apiPost(`/api/editor/clip/${clip.id}/isolate-vocal`);
+  selectedClipId = result.clip_id || clip.id;
+  applyProjectResponse(result);
+}
+
+function clipSnapshot(clip) {
+  const track = findTrackForClip(clip.id);
+  return {
+    clip: JSON.parse(JSON.stringify(clip)),
+    track_id: track?.id || null,
+    track_type: track?.track_type || null,
+    attrs: copyClipAttributes(clip)
+  };
+}
+
+function copySelectedClip() {
+  const ids = selectedClipIdList();
+  if (ids.length) {
+    clipboardClipIds = ids;
+    clipboardClipSnapshots = ids.map(id => findClipById(id)).filter(Boolean).map(clipSnapshot);
+    return;
+  }
+  const clip = selectedClip || findClipById(selectedClipId);
+  clipboardClipIds = clip ? [Number(clip.id)] : [];
+  clipboardClipSnapshots = clip ? [clipSnapshot(clip)] : [];
+}
+
+async function pasteClipboardClip() {
+  const ids = clipboardClipIds.map(Number).filter(id => findClipById(id));
+  if (!ids.length && !clipboardClipSnapshots.length) return;
+  if (!ids.length) {
+    await pasteSnapshotClips();
+    return;
+  }
+  const clips = ids.map(id => findClipById(id)).filter(Boolean);
+  if (clips.some(clip => isClipLocked(clip))) return;
+  if (clips.length === 1) {
+    selectedClipId = clips[0].id;
+    selectedClip = clips[0];
+    await duplicateSelectedClip(playheadTime);
+    return;
+  }
+  const result = await apiPost(`/api/editor/project/${projectId}/clips/duplicate`, {
+    clip_ids: ids.join(','),
+    start_time: playheadTime
+  });
+  selectedClipIds = new Set((result.clip_ids || []).map(Number));
+  selectedClipId = (result.clip_ids || [])[0] || null;
+  applyProjectResponse(result);
+}
+
+async function pasteSnapshotClips() {
+  if (!clipboardClipSnapshots.length) return;
+  const firstStart = Math.min(...clipboardClipSnapshots.map(item => Number(item.clip.start_time || 0)));
+  const createdIds = [];
+  for (const item of clipboardClipSnapshots) {
+    const clip = item.clip;
+    const targetTrack = findTrackById(item.track_id)
+      || projectData.tracks.find(track => track.track_type === item.track_type)
+      || projectData.tracks[0];
+    if (!targetTrack || targetTrack.locked) continue;
+    const nextStart = Math.max(0, playheadTime + Number(clip.start_time || 0) - firstStart);
+    let result = null;
+    if (clip.clip_type === 'text') {
+      result = await apiPost(`/api/editor/project/${projectId}/text-clip`, {
+        text: item.attrs?.text || clip.name || '输入文字',
+        start_time: nextStart,
+        duration: clip.duration,
+        x: item.attrs?.x ?? 120,
+        y: item.attrs?.y ?? 240,
+        width: item.attrs?.width ?? 760,
+        font_size: item.attrs?.font_size ?? 54,
+        color: item.attrs?.color ?? 'white',
+        stroke_width: item.attrs?.stroke_width ?? 2,
+        stroke_color: item.attrs?.stroke_color ?? 'black',
+        shadow_x: item.attrs?.shadow_x ?? 0,
+        shadow_y: item.attrs?.shadow_y ?? 2,
+        box_color: item.attrs?.box_color ?? 'black',
+        box_opacity: item.attrs?.box_opacity ?? 0.34
+      });
+    } else if (clip.asset?.id) {
+      result = await apiPost(`/api/editor/project/${projectId}/clip`, {
+        track_id: targetTrack.id,
+        asset_id: clip.asset.id,
+        start_time: nextStart,
+        duration: clip.duration,
+        source_start: clip.source_start || 0
+      });
+    }
+    if (!result?.clip_id) continue;
+    applyProjectResponse(result);
+    const created = findClipById(result.clip_id);
+    if (created && item.attrs) await updateClipFromState(created, item.attrs);
+    createdIds.push(result.clip_id);
+  }
+  selectedClipIds = new Set(createdIds.map(Number));
+  selectedClipId = createdIds[0] || null;
+  await refreshProject();
+}
+
+async function cutSelectedClip() {
+  copySelectedClip();
+  await deleteSelectedClip();
+}
+
+async function saveSelectedClipPreset() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip) return;
+  const name = await requestEditorName({
+    title: '预设名称',
+    value: `${clip.name || '片段'}预设`,
+    placeholder: '输入预设名称'
+  });
+  if (!name) return;
+  const presets = JSON.parse(localStorage.getItem('editorClipPresets') || '[]');
+  presets.unshift({
+    id: `preset-${Date.now()}`,
+    name,
+    clip_type: clip.clip_type,
+    asset_type: clip.asset?.asset_type || null,
+    attrs: copyClipAttributes(clip),
+    created_at: new Date().toISOString()
+  });
+  localStorage.setItem('editorClipPresets', JSON.stringify(presets.slice(0, 80)));
+}
+
+function showSelectedClipFile() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  const url = clip?.asset?.url;
+  if (!url) {
+    alert('当前片段没有关联素材文件');
+    return;
+  }
+  window.open(url, '_blank', 'noopener');
+}
+
+async function nudgeSelectedClip(delta) {
+  const ids = selectedClipIdList();
+  if (ids.length > 1) {
+    const result = await apiPost(`/api/editor/project/${projectId}/clips/move`, {
+      clip_ids: ids.join(','),
+      delta
+    });
+    selectedClipIds = new Set(ids);
+    selectedClipId = ids[0];
+    applyProjectResponse(result);
+    return;
+  }
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  const nextStart = Math.max(0, snapTime(clip.start_time + delta));
+  await updateClipFromState(clip, {start_time: nextStart});
+  selectedClipId = clip.id;
+  setPlayhead(nextStart, false);
+  await refreshProject();
+}
+
+function setPlayhead(time, renderPreviewFrame = true) {
+  playheadTime = Math.max(0, Math.min(time, timelineDuration()));
+  updatePlayhead();
+  updatePlayerTime();
+  if (renderPreviewFrame) {
+    renderTimelineCompositePreview();
+    return;
+  }
+  if (activeVisualSignature(playheadTime) !== previewSignature) renderTimelineCompositePreview();
+  else syncPreviewVideos();
+}
+
+function updatePlayhead() {
+  const board = document.getElementById('timeline');
+  const playhead = document.getElementById('playhead');
+  if (!board || !playhead) return;
+  const duration = timelineDuration();
+  const panelRect = document.querySelector('.jy-timeline-panel')?.getBoundingClientRect();
+  const firstLaneRect = document.querySelector('.timeline-lane')?.getBoundingClientRect();
+  const timelineLeft = panelRect && firstLaneRect ? firstLaneRect.left - panelRect.left : 136;
+  const laneWidth = timelineLaneWidth();
+  playhead.style.left = `${timelineLeft + (playheadTime / duration) * laneWidth - board.scrollLeft}px`;
+}
+
+function beginPanelResize(event, handle) {
+  if (event.button !== 0) return;
+  const main = document.querySelector('.jy-main');
+  const workspace = document.querySelector('.editor-workspace');
+  if (!main || !workspace) return;
+  event.preventDefault();
+  const mediaWidth = parseFloat(getComputedStyle(main).getPropertyValue('--jy-media-width')) || 320;
+  const inspectorWidth = parseFloat(getComputedStyle(main).getPropertyValue('--jy-inspector-width')) || 320;
+  const mainHeight = main.getBoundingClientRect().height;
+  panelResizeState = {
+    panel: handle.dataset.resizePanel,
+    handle,
+    startX: event.clientX,
+    startY: event.clientY,
+    mediaWidth,
+    inspectorWidth,
+    mainHeight
+  };
+  handle.classList.add('is-dragging');
+  document.body.classList.add('is-panel-resizing');
+  document.body.style.cursor = handle.dataset.resizePanel === 'timeline' ? 'row-resize' : 'col-resize';
+}
+
+function updatePanelResize(event) {
+  if (!panelResizeState) return;
+  const main = document.querySelector('.jy-main');
+  const workspace = document.querySelector('.editor-workspace');
+  if (!main || !workspace) return;
+  const delta = event.clientX - panelResizeState.startX;
+  if (panelResizeState.panel === 'timeline') {
+    const next = clamp(panelResizeState.mainHeight + event.clientY - panelResizeState.startY, 220, window.innerHeight - 190);
+    workspace.style.setProperty('--jy-main-height', `${next}px`);
+    localStorage.setItem('ace-editor-main-height', String(Math.round(next)));
+  } else if (panelResizeState.panel === 'media') {
+    const next = clamp(panelResizeState.mediaWidth + delta, 220, 560);
+    main.style.setProperty('--jy-media-width', `${next}px`);
+    localStorage.setItem('ace-editor-media-width', String(Math.round(next)));
+  } else {
+    const next = clamp(panelResizeState.inspectorWidth - delta, 240, 560);
+    main.style.setProperty('--jy-inspector-width', `${next}px`);
+    localStorage.setItem('ace-editor-inspector-width', String(Math.round(next)));
+  }
+  resizePreviewStage();
+  updatePlayhead();
+}
+
+function finishPanelResize() {
+  if (!panelResizeState) return;
+  panelResizeState.handle.classList.remove('is-dragging');
+  panelResizeState = null;
+  document.body.classList.remove('is-panel-resizing');
+  document.body.style.cursor = '';
+}
+
+function updatePlayerTime() {
+  const label = document.getElementById('playerTime');
+  if (!label) return;
+  label.textContent = `${formatTimecode(playheadTime)} / ${formatTimecode(timelineDuration())}`;
+}
+
+function syncPreviewVideos() {
+  document.querySelectorAll('#previewPane video').forEach(video => {
+    const layer = video.closest('[data-clip-id]');
+    const clip = findClipById(video.dataset.clipId || layer?.dataset.clipId);
+    if (!clip) return;
+    syncVideoElementToPlayhead(video, clip);
+    if (isPlaying) video.play().catch(() => {});
+    else video.pause();
+  });
+}
+
+function updatePlayButton() {
+  const button = document.getElementById('previewPlayBtn');
+  if (!button) return;
+  button.innerHTML = `<i data-lucide="${isPlaying ? 'pause' : 'play'}"></i>`;
+  lucide.createIcons();
+}
+
+function stopPlayback() {
+  isPlaying = false;
+  if (playbackFrame) cancelAnimationFrame(playbackFrame);
+  playbackFrame = null;
+  updatePlayButton();
+  syncPreviewVideos();
+}
+
+function tickPlayback(now) {
+  if (!isPlaying) return;
+  const nextTime = playbackStartedTime + (now - playbackStartedAt) / 1000;
+  if (nextTime >= timelineDuration()) {
+    setPlayhead(timelineDuration(), false);
+    stopPlayback();
+    return;
+  }
+  setPlayhead(nextTime, false);
+  playbackFrame = requestAnimationFrame(tickPlayback);
+}
+
+function togglePlayback() {
+  if (isPlaying) {
+    stopPlayback();
+    return;
+  }
+  if (playheadTime >= timelineDuration()) setPlayhead(firstVisibleClipTime());
+  if (!activeVisualSignature(playheadTime)) setPlayhead(firstVisibleClipTime());
+  isPlaying = true;
+  playbackStartedAt = performance.now();
+  playbackStartedTime = playheadTime;
+  updatePlayButton();
+  renderTimelineCompositePreview();
+  playbackFrame = requestAnimationFrame(tickPlayback);
+}
+
+document.getElementById('timeline').addEventListener('scroll', () => {
+  hideClipContextMenu();
+  updatePlayhead();
+  syncRulerScroll();
+});
+document.getElementById('timeline').addEventListener('mousedown', beginTimelineSelection);
+document.getElementById('previewPlayBtn').addEventListener('click', togglePlayback);
+document.getElementById('timelineZoom').addEventListener('input', event => {
+  timelineZoom = Number(event.target.value || 42);
+  renderTimeline();
+});
+document.getElementById('zoomOutBtn').addEventListener('click', () => {
+  const input = document.getElementById('timelineZoom');
+  input.value = Math.max(0, Number(input.value) - 10);
+  input.dispatchEvent(new Event('input'));
+});
+document.getElementById('zoomInBtn').addEventListener('click', () => {
+  const input = document.getElementById('timelineZoom');
+  input.value = Math.min(100, Number(input.value) + 10);
+  input.dispatchEvent(new Event('input'));
+});
+document.getElementById('snapBtn').addEventListener('click', event => {
+  snapEnabled = !snapEnabled;
+  event.currentTarget.classList.toggle('is-active', snapEnabled);
+});
+window.addEventListener('resize', () => {
+  renderRuler();
+  resizePreviewStage();
+  updatePlayhead();
+});
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]));
+}
+
+function assetCardHtml(asset) {
+  const icon = asset.asset_type === 'audio' ? 'music' : asset.asset_type === 'image' ? 'image' : 'film';
+  const thumb = asset.preview_url ? `<img src="${escapeHtml(asset.preview_url)}" alt="">` : `<i data-lucide="${icon}"></i>`;
+  const deleteButton = asset.deletable === false ? '' : '<button class="asset-delete" type="button" title="删除素材"><i data-lucide="trash-2"></i></button>';
+  return `
+    <button class="asset-add" type="button" title="添加到时间线"><i data-lucide="plus"></i></button>
+    <button class="asset-replace" type="button" title="替换选中片段"><i data-lucide="replace"></i></button>
+    ${deleteButton}
+    <span class="jy-asset-thumb">${thumb}</span>
+    <span class="jy-asset-name">${escapeHtml(asset.name)}</span>
+    <span class="jy-asset-type">${escapeHtml(asset.asset_type)}</span>
+  `;
+}
+
+function bindAssetItem(item) {
+  item.addEventListener('pointerdown', event => beginAssetPointerDrag(event, item));
+  item.addEventListener('mousedown', event => {
+    if (!window.PointerEvent) beginAssetPointerDrag(event, item);
+  });
+  item.addEventListener('click', event => {
+    if (event.target.closest('.asset-delete, .asset-add, .asset-replace')) return;
+    if (suppressAssetClick) {
+      suppressAssetClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    selectedAsset = JSON.parse(item.dataset.asset);
+    document.querySelectorAll('.asset-item').forEach(card => card.classList.remove('is-selected'));
+    item.classList.add('is-selected');
+    renderPreview(selectedAsset);
+  });
+  item.addEventListener('keydown', event => {
+    if (!['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    item.click();
+  });
+  item.addEventListener('dragstart', event => {
+    event.preventDefault();
+  });
+  item.querySelector('.asset-delete')?.addEventListener('click', async event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const asset = JSON.parse(item.dataset.asset);
+    try {
+      await apiPost(`/api/editor/project/${projectId}/asset/${asset.id}/delete`);
+      if (selectedAsset?.id === asset.id) {
+        selectedAsset = null;
+        renderPreview(null);
+      }
+      item.remove();
+      await refreshProject();
+    } catch (error) {
+      console.warn('素材删除失败', error);
+    }
+  });
+  item.querySelector('.asset-add')?.addEventListener('click', async event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const asset = JSON.parse(item.dataset.asset);
+    selectedAsset = asset;
+    const track = projectData.tracks.find(item => item.track_type === recommendedTrackType(asset))
+      || projectData.tracks.find(item => compatibleTrack(item, asset));
+    if (!track) return;
+    await addAssetToTrack(track, asset, playheadTime);
+  });
+  item.querySelector('.asset-replace')?.addEventListener('click', async event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const asset = JSON.parse(item.dataset.asset);
+    selectedAsset = asset;
+    await replaceSelectedClipAsset(asset);
+  });
+}
+
+document.querySelectorAll('.asset-item').forEach(bindAssetItem);
+
+function insertAssetCard(asset) {
+  asset.deletable = asset.deletable !== false;
+  const list = document.getElementById('assetList');
+  const button = document.createElement('div');
+  button.className = 'asset-item jy-asset-card';
+  button.setAttribute('role', 'button');
+  button.tabIndex = 0;
+  button.dataset.asset = JSON.stringify(asset);
+  button.innerHTML = assetCardHtml(asset);
+  bindAssetItem(button);
+  list.prepend(button);
+  lucide.createIcons();
+  showMediaPanel('mine');
+  return button;
+}
+
+async function uploadEditorAsset(file) {
+  const body = new FormData();
+  body.append('media', file);
+  const res = await fetch(`/api/editor/project/${projectId}/asset`, {method: 'POST', body});
+  if (!res.ok) throw new Error(await res.text());
+  const asset = await res.json();
+  asset.deletable = true;
+  selectedAsset = asset;
+  renderPreview(asset);
+  insertAssetCard(asset);
+  return asset;
+}
+
+function showMediaPanel(panelName) {
+  document.querySelectorAll('[data-panel-tab]').forEach(button => {
+    button.classList.toggle('is-active', button.dataset.panelTab === panelName);
+  });
+  document.querySelectorAll('[data-media-panel]').forEach(panel => {
+    panel.classList.toggle('is-active', panel.dataset.mediaPanel === panelName);
+  });
+  lucide.createIcons();
+}
+
+document.querySelectorAll('[data-panel-tab]').forEach(button => {
+  button.addEventListener('click', () => showMediaPanel(button.dataset.panelTab || 'import'));
+});
+
+document.getElementById('assetUpload').addEventListener('change', async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  await uploadEditorAsset(file);
+  event.target.value = '';
+});
+
+document.getElementById('addMediaBtn')?.addEventListener('click', () => {
+  showMediaPanel('import');
+  document.getElementById('assetUpload').click();
+});
+
+document.getElementById('selectToolBtn')?.addEventListener('click', () => {
+  clearClipSelection();
+  document.getElementById('selectToolBtn').classList.add('is-active');
+});
+
+document.getElementById('linkedSelectionBtn')?.addEventListener('click', event => {
+  linkedSelectionEnabled = !linkedSelectionEnabled;
+  event.currentTarget.classList.toggle('is-active', linkedSelectionEnabled);
+  event.currentTarget.innerHTML = `<i data-lucide="${linkedSelectionEnabled ? 'link' : 'unlink'}"></i>`;
+  if (selectedClip) selectClip(selectedClip, {skipLinked: !linkedSelectionEnabled});
+  lucide.createIcons();
+});
+
+document.getElementById('rippleInsertBtn')?.addEventListener('click', event => {
+  rippleInsertEnabled = !rippleInsertEnabled;
+  event.currentTarget.classList.toggle('is-active', rippleInsertEnabled);
+  event.currentTarget.innerHTML = `<i data-lucide="${rippleInsertEnabled ? 'panel-right-close' : 'panel-right-open'}"></i>`;
+  lucide.createIcons();
+});
+
+document.getElementById('originalScaleBtn')?.addEventListener('click', () => setPreviewOriginalScale(!previewOriginalScale));
+document.getElementById('previewFullscreenBtn')?.addEventListener('click', togglePreviewFullscreen);
+
+function preferredRecorderMime() {
+  if (!window.MediaRecorder) return '';
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/wav'];
+  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+async function startVoiceRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    throw new Error('当前浏览器不支持录音');
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  const mimeType = preferredRecorderMime();
+  mediaRecorder = new MediaRecorder(stream, mimeType ? {mimeType} : undefined);
+  recordingChunks = [];
+  recordingStartedAt = Date.now();
+  mediaRecorder.addEventListener('dataavailable', event => {
+    if (event.data?.size) recordingChunks.push(event.data);
+  });
+  mediaRecorder.addEventListener('stop', async () => {
+    const duration = Math.max(0.5, (Date.now() - recordingStartedAt) / 1000);
+    const type = mediaRecorder.mimeType || mimeType || 'audio/webm';
+    const ext = type.includes('mp4') ? 'm4a' : type.includes('wav') ? 'wav' : 'webm';
+    const blob = new Blob(recordingChunks, {type});
+    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+    mediaRecorder = null;
+    recordingChunks = [];
+    try {
+      const asset = await uploadEditorAsset(new File([blob], `voice-${Date.now()}.${ext}`, {type}));
+      const track = projectData.tracks.find(item => item.track_type === 'audio')
+        || projectData.tracks.find(item => compatibleTrack(item, asset));
+      if (track) await addAssetToTrack(track, asset, playheadTime, duration);
+    } finally {
+      setRecordingUi(false);
+    }
+  });
+  mediaRecorder.start(250);
+  setRecordingUi(true);
+}
+
+function stopVoiceRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+}
+
+function setRecordingUi(isRecording) {
+  const button = document.getElementById('recordBtn');
+  if (!button) return;
+  button.classList.toggle('is-recording', isRecording);
+  button.title = isRecording ? '停止录音' : '录音';
+  button.innerHTML = `<i data-lucide="${isRecording ? 'square' : 'mic'}"></i>`;
+  lucide.createIcons();
+}
+
+function setPreviewOriginalScale(enabled) {
+  previewOriginalScale = enabled;
+  const pane = document.getElementById('previewPane');
+  const button = document.getElementById('originalScaleBtn');
+  pane.classList.toggle('is-original-scale', enabled);
+  button.classList.toggle('is-active', enabled);
+  button.textContent = enabled ? '适配' : '原画';
+  resizePreviewStage();
+}
+
+async function togglePreviewFullscreen() {
+  const pane = document.getElementById('previewPane');
+  if (!document.fullscreenElement) {
+    await pane.requestFullscreen?.();
+  } else {
+    await document.exitFullscreen?.();
+  }
+}
+
+document.getElementById('addTrackBtn').addEventListener('click', async () => {
+  const reusable = (projectData.tracks || []).find(track =>
+    track.track_type === 'overlay' && !track.locked && !(track.clips || []).length
+  );
+  if (reusable) {
+    showEmptyTimelineTracks = true;
+    renderTimeline();
+    return;
+  }
+  await apiPost(`/api/editor/project/${projectId}/track`, {name: '新叠加轨', track_type: 'overlay'});
+  showEmptyTimelineTracks = true;
+  await refreshProject();
+});
+
+document.getElementById('cleanupTracksBtn')?.addEventListener('click', async () => {
+  const result = await apiPost(`/api/editor/project/${projectId}/tracks/cleanup`);
+  showEmptyTimelineTracks = true;
+  applyProjectResponse(result);
+});
+
+document.getElementById('toggleEmptyTracksBtn')?.addEventListener('click', event => {
+  showEmptyTimelineTracks = !showEmptyTimelineTracks;
+  event.currentTarget.classList.toggle('is-active', showEmptyTimelineTracks);
+  renderTimeline();
+});
+
+document.getElementById('projectCanvasPreset').addEventListener('change', event => {
+  setProjectCanvasInputsFromPreset(event.target.value);
+});
+
+document.getElementById('quickCanvasPreset').addEventListener('change', async event => {
+  const preset = event.target.value;
+  if (preset === 'custom') {
+    document.getElementById('projectCanvasPreset').value = 'custom';
+    document.getElementById('projectCanvasWidth').focus();
+    return;
+  }
+  document.getElementById('projectCanvasPreset').value = preset;
+  setProjectCanvasInputsFromPreset(preset);
+  await saveProjectSettings({canvas: preset});
+});
+
+document.getElementById('projectSettingsForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  await saveProjectSettings();
+});
+
+document.getElementById('editorNameDialogConfirm')?.addEventListener('click', () => {
+  closeEditorNameDialog(document.getElementById('editorNameDialogInput').value);
+});
+
+document.getElementById('editorNameDialogCancel')?.addEventListener('click', () => {
+  closeEditorNameDialog(null);
+});
+
+document.getElementById('editorNameDialog')?.addEventListener('mousedown', event => {
+  if (event.target.id === 'editorNameDialog') closeEditorNameDialog(null);
+});
+
+document.getElementById('editorNameDialogInput')?.addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    closeEditorNameDialog(event.currentTarget.value);
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeEditorNameDialog(null);
+  }
+});
+
+document.getElementById('undoBtn').addEventListener('click', async () => {
+  applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/undo`));
+});
+
+document.getElementById('redoBtn').addEventListener('click', async () => {
+  applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/redo`));
+});
+
+document.getElementById('addMarkerBtn').addEventListener('click', addMarkerAtPlayhead);
+
+document.getElementById('bulkSubtitleBtn').addEventListener('click', async () => {
+  const text = document.getElementById('bulkSubtitleText').value.trim();
+  if (!text) return;
+  applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/subtitles`, {
+    subtitles: text,
+    start_time: 0,
+    per_line_duration: 2.5
+  }));
+});
+
+document.getElementById('clipForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const clip = selectedClip || findClipById(selectedClipId || document.getElementById('clipId').value);
+  if (!clip) return;
+  if (isTrackLockedForClip(clip)) return;
+  const submittedText = document.getElementById('clipText').value;
+  const submittedName = clip.clip_type === 'text' ? submittedText : document.getElementById('clipName').value;
+  await updateClipFromState(clip, {
+    name: submittedName,
+    enabled: document.getElementById('clipEnabled').checked ? 'true' : 'false',
+    locked: document.getElementById('clipLocked').checked ? 'true' : 'false',
+    start_time: document.getElementById('clipStart').value,
+    duration: document.getElementById('clipDuration').value,
+    source_start: document.getElementById('clipSourceStart').value,
+    fit_mode: document.getElementById('clipFitMode').value,
+    background_color: document.getElementById('clipBackgroundColor').value,
+    z_index: document.getElementById('clipZ').value,
+    x: document.getElementById('clipX').value,
+    y: document.getElementById('clipY').value,
+    width: document.getElementById('clipWidth').value,
+    keyframe_enabled: document.getElementById('clipKeyframeEnabled').checked ? 'true' : '',
+    keyframe_end_x: document.getElementById('clipKeyframeEndX').value,
+    keyframe_end_y: document.getElementById('clipKeyframeEndY').value,
+    keyframe_end_width: document.getElementById('clipKeyframeEndWidth').value,
+    keyframes: JSON.stringify((clip.params || {}).keyframes || []),
+    overlay_border_width: document.getElementById('clipOverlayBorderWidth').value,
+    overlay_border_color: document.getElementById('clipOverlayBorderColor').value,
+    overlay_shadow: document.getElementById('clipOverlayShadow').value,
+    overlay_blend_mode: document.getElementById('clipOverlayBlendMode').value,
+    opacity: document.getElementById('clipOpacity').value,
+    volume: document.getElementById('clipVolume').value,
+    volume_start: document.getElementById('clipVolumeStart').value,
+    volume_end: document.getElementById('clipVolumeEnd').value,
+    audio_enabled: document.getElementById('clipAudioEnabled').checked ? 'true' : 'false',
+    denoise: document.getElementById('clipDenoise').checked ? 'true' : 'false',
+    loudness_normalize: document.getElementById('clipLoudnessNormalize').checked ? 'true' : 'false',
+    audio_channel_mode: document.getElementById('clipAudioChannelMode').value,
+    audio_pan: document.getElementById('clipAudioPan').value,
+    audio_offset: document.getElementById('clipAudioOffset').value,
+    audio_ducking_enabled: document.getElementById('clipAudioDuckingEnabled').checked ? 'true' : 'false',
+    audio_ducking_level: document.getElementById('clipAudioDuckingLevel').value,
+    audio_ducking_attack: document.getElementById('clipAudioDuckingAttack').value,
+    audio_ducking_release: document.getElementById('clipAudioDuckingRelease').value,
+    vocal_isolation_enabled: document.getElementById('clipVocalIsolationEnabled').checked ? 'true' : 'false',
+    vocal_isolation_strength: document.getElementById('clipVocalIsolationStrength').value,
+    speed: document.getElementById('clipSpeed').value,
+    speed_curve: document.getElementById('clipSpeedCurve').value,
+    rotation: document.getElementById('clipRotation').value,
+    flip_x: document.getElementById('clipFlipX').checked ? 'true' : '',
+    flip_y: document.getElementById('clipFlipY').checked ? 'true' : '',
+    reverse: document.getElementById('clipReverse').checked ? 'true' : '',
+    crop_left: document.getElementById('clipCropLeft').value,
+    crop_right: document.getElementById('clipCropRight').value,
+    crop_top: document.getElementById('clipCropTop').value,
+    crop_bottom: document.getElementById('clipCropBottom').value,
+    motion_preset: document.getElementById('clipMotionPreset').value,
+    motion_intensity: document.getElementById('clipMotionIntensity').value,
+    mask_type: document.getElementById('clipMaskType').value,
+    filter_preset: document.getElementById('clipFilterPreset').value,
+    contrast: document.getElementById('clipContrast').value,
+    saturation: document.getElementById('clipSaturation').value,
+    brightness: document.getElementById('clipBrightness').value,
+    blur: document.getElementById('clipBlur').value,
+    sharpen: document.getElementById('clipSharpen').value,
+    chroma_enabled: document.getElementById('clipChromaEnabled').checked ? 'true' : '',
+    chroma_color: document.getElementById('clipChromaColor').value,
+    chroma_similarity: document.getElementById('clipChromaSimilarity').value,
+    chroma_blend: document.getElementById('clipChromaBlend').value,
+    transition: document.getElementById('clipTransition').value,
+    transition_duration: document.getElementById('clipTransitionDuration').value,
+    text: submittedText,
+    font_size: document.getElementById('clipFontSize').value,
+    color: document.getElementById('clipColor').value,
+    stroke_width: document.getElementById('clipStrokeWidth').value,
+    stroke_color: document.getElementById('clipStrokeColor').value,
+    shadow_x: document.getElementById('clipShadowX').value,
+    shadow_y: document.getElementById('clipShadowY').value,
+    box_color: document.getElementById('clipBoxColor').value,
+    box_opacity: document.getElementById('clipBoxOpacity').value,
+    fade_in: document.getElementById('clipFadeIn').value,
+    fade_out: document.getElementById('clipFadeOut').value,
+    animation_in: document.getElementById('clipAnimationIn').value,
+    animation_in_duration: document.getElementById('clipAnimationInDuration').value,
+    animation_out: document.getElementById('clipAnimationOut').value,
+    animation_out_duration: document.getElementById('clipAnimationOutDuration').value
+  });
+  await refreshProject();
+});
+
+document.getElementById('clipText')?.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey) return;
+  event.preventDefault();
+  document.getElementById('clipForm').requestSubmit();
+});
+
+const textPresets = {
+  classic: {color: 'white', stroke_width: 2, stroke_color: 'black', shadow_x: 0, shadow_y: 2, box_color: 'black', box_opacity: 0},
+  impact: {color: '#facc15', stroke_width: 4, stroke_color: 'black', shadow_x: 2, shadow_y: 3, box_color: 'black', box_opacity: 0.28},
+  soft: {color: 'white', stroke_width: 1, stroke_color: '#0f172a', shadow_x: 0, shadow_y: 2, box_color: '#0f172a', box_opacity: 0.48}
+};
+
+document.querySelectorAll('.text-preset').forEach(button => {
+  button.addEventListener('click', async () => {
+    const preset = textPresets[button.dataset.preset];
+    const clip = selectedClip || findClipById(selectedClipId);
+    if (!preset || !clip || clip.clip_type !== 'text' || isClipLocked(clip)) return;
+    document.getElementById('clipColor').value = preset.color;
+    document.getElementById('clipStrokeWidth').value = preset.stroke_width;
+    document.getElementById('clipStrokeColor').value = preset.stroke_color;
+    document.getElementById('clipShadowX').value = preset.shadow_x;
+    document.getElementById('clipShadowY').value = preset.shadow_y;
+    document.getElementById('clipBoxColor').value = preset.box_color;
+    document.getElementById('clipBoxOpacity').value = preset.box_opacity;
+    await updateClipFromState(clip, preset);
+    await refreshProject();
+  });
+});
+
+document.querySelectorAll('.speed-preset').forEach(button => {
+  button.addEventListener('click', async () => {
+    const curve = button.dataset.speedCurve || 'none';
+    const clip = selectedClip || findClipById(selectedClipId);
+    if (!clip || isClipLocked(clip)) return;
+    document.getElementById('clipSpeedCurve').value = curve;
+    await updateClipFromState(clip, {speed_curve: curve});
+    await refreshProject();
+  });
+});
+
+document.getElementById('addKeyframeBtn').addEventListener('click', async () => {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  const duration = Math.max(0.2, Number(clip.duration || 0.2));
+  const frame = {
+    time: Number(clamp(playheadTime - clip.start_time, 0, duration).toFixed(3)),
+    x: Number(document.getElementById('clipX').value || 0),
+    y: Number(document.getElementById('clipY').value || 0),
+    width: Number(document.getElementById('clipWidth').value || 420)
+  };
+  const frames = Array.isArray(clip.params?.keyframes) ? [...clip.params.keyframes] : [];
+  const index = frames.findIndex(item => Math.abs(Number(item.time || 0) - frame.time) < 0.06);
+  if (index >= 0) frames[index] = frame;
+  else frames.push(frame);
+  frames.sort((a, b) => Number(a.time || 0) - Number(b.time || 0));
+  document.getElementById('clipKeyframeEnabled').checked = true;
+  await updateClipFromState(clip, {keyframe_enabled: 'true', keyframes: JSON.stringify(frames)});
+  selectedClipId = clip.id;
+  await refreshProject();
+});
+
+document.getElementById('clearKeyframesBtn').addEventListener('click', async () => {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  await updateClipFromState(clip, {keyframes: '[]'});
+  selectedClipId = clip.id;
+  await refreshProject();
+});
+
+function setTopToolActive(toolName) {
+  document.querySelectorAll('.jy-tool').forEach(button => {
+    button.classList.toggle('is-active', button.dataset.tool === toolName);
+  });
+}
+
+document.querySelectorAll('.jy-tool').forEach(button => {
+  button.addEventListener('click', () => {
+    const tool = button.dataset.tool;
+    setTopToolActive(tool);
+    if (tool === '素材') showMediaPanel('import');
+    if (tool === '音频') showMediaPanel('sfx');
+    if (tool === '字幕') showMediaPanel('subtitle');
+    if (tool === '贴纸') showMediaPanel('sticker');
+    if (tool === '特效' || tool === '滤镜') showMediaPanel('effect');
+    if (tool === '转场') showMediaPanel('transition');
+    if (tool === '智能包装') showMediaPanel('ai');
+  });
+});
+
+document.querySelectorAll('.sticker-preset').forEach(button => {
+  button.addEventListener('click', () => addStickerClip(button.dataset.sticker));
+});
+
+document.querySelectorAll('.effect-preset').forEach(button => {
+  button.addEventListener('click', () => applyEffectPreset(button.dataset.effect));
+});
+
+document.querySelectorAll('.transition-preset').forEach(button => {
+  button.addEventListener('click', () => applyTransitionPreset(button.dataset.transition));
+});
+
+document.getElementById('addTextBtn').addEventListener('click', () => addTextClip(playheadTime));
+document.querySelector('[data-tool="文本"]').addEventListener('click', () => addTextClip(playheadTime));
+
+document.getElementById('splitBtn').addEventListener('click', async () => {
+  await splitSelectedClip();
+});
+document.getElementById('freezeFrameBtn')?.addEventListener('click', freezeSelectedClip);
+document.getElementById('prevEditPointBtn')?.addEventListener('click', () => jumpToEditPoint(-1));
+document.getElementById('nextEditPointBtn')?.addEventListener('click', () => jumpToEditPoint(1));
+document.getElementById('detachAudioBtn').addEventListener('click', detachSelectedAudio);
+document.getElementById('isolateVocalBtn').addEventListener('click', isolateSelectedVocal);
+document.getElementById('duplicateBtn').addEventListener('click', async () => {
+  copySelectedClip();
+  await duplicateSelectedClip();
+});
+document.getElementById('pasteBtn').addEventListener('click', pasteClipboardClip);
+document.getElementById('deleteBtn').addEventListener('click', deleteSelectedClip);
+document.getElementById('rippleDeleteBtn').addEventListener('click', rippleDeleteSelectedClip);
+document.querySelector('.jy-export-form')?.addEventListener('submit', submitEditorExport);
+document.getElementById('editorExportClose')?.addEventListener('click', () => {
+  document.getElementById('editorExportPanel').hidden = true;
+});
+document.getElementById('recordBtn')?.addEventListener('click', async () => {
+  try {
+    if (mediaRecorder && mediaRecorder.state === 'recording') stopVoiceRecording();
+    else await startVoiceRecording();
+  } catch (error) {
+    console.warn('录音失败', error);
+    setRecordingUi(false);
+  }
+});
+
+document.getElementById('clipContextMenu').querySelectorAll('[data-context-action]').forEach(button => {
+  button.addEventListener('click', async event => {
+    event.preventDefault();
+    const action = button.dataset.contextAction;
+    await runClipContextAction(action);
+    hideClipContextMenu();
+  });
+});
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('#clipContextMenu')) hideClipContextMenu();
+});
+document.addEventListener('contextmenu', event => {
+  if (!event.target.closest('.timeline-clip')) hideClipContextMenu();
+});
+
+document.querySelectorAll('.jy-resize-handle, .jy-vertical-resize-handle').forEach(handle => {
+  handle.addEventListener('mousedown', event => beginPanelResize(event, handle));
+});
+
+document.addEventListener('keydown', async event => {
+  const editingField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
+  if (editingField) return;
+  const mod = event.metaKey || event.ctrlKey;
+  if (event.code === 'Space') {
+    event.preventDefault();
+    togglePlayback();
+    return;
+  }
+  if (mod && event.key.toLowerCase() === 'c') {
+    event.preventDefault();
+    copySelectedClip();
+    return;
+  }
+  if (mod && event.key.toLowerCase() === 'v') {
+    event.preventDefault();
+    await pasteClipboardClip();
+    return;
+  }
+  if (event.key.toLowerCase() === 's' && selectedClipId) {
+    event.preventDefault();
+    await splitSelectedClip();
+    return;
+  }
+  if (event.key.toLowerCase() === 'd' && selectedClipId) {
+    event.preventDefault();
+    await detachSelectedAudio();
+    return;
+  }
+  if (event.key.toLowerCase() === 'v' && selectedClipId) {
+    event.preventDefault();
+    await isolateSelectedVocal();
+    return;
+  }
+  if (event.key.toLowerCase() === 'm') {
+    event.preventDefault();
+    await addMarkerAtPlayhead();
+    return;
+  }
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    jumpToEditPoint(event.key === 'ArrowUp' ? -1 : 1);
+    return;
+  }
+  if (['ArrowLeft', 'ArrowRight'].includes(event.key) && selectedClipId) {
+    event.preventDefault();
+    const delta = (event.shiftKey ? 1 : 0.1) * (event.key === 'ArrowLeft' ? -1 : 1);
+    await nudgeSelectedClip(delta);
+    return;
+  }
+  if (!selectedClipId || !['Delete', 'Backspace'].includes(event.key)) return;
+  event.preventDefault();
+  if (event.shiftKey) await rippleDeleteSelectedClip();
+  else await deleteSelectedClip();
+});
+
+document.addEventListener('mousemove', event => {
+  if (assetPointerDragState) {
+    updateAssetPointerDrag(event);
+    return;
+  }
+  if (panelResizeState) {
+    updatePanelResize(event);
+    return;
+  }
+  if (selectionBoxState) {
+    updateTimelineSelection(event);
+    return;
+  }
+  if (previewDragState) {
+    updatePreviewDrag(event);
+    return;
+  }
+  if (timelineDragState) {
+    updateTimelineClipMove(event);
+    return;
+  }
+  if (trimState) updateTimelineTrim(event);
+});
+
+document.addEventListener('pointermove', event => {
+  if (assetPointerDragState) {
+    updateAssetPointerDrag(event);
+  }
+});
+
+document.addEventListener('mouseup', async event => {
+  if (assetPointerDragState) {
+    await finishAssetPointerDrag(event);
+    return;
+  }
+  if (panelResizeState) {
+    finishPanelResize();
+    return;
+  }
+  if (selectionBoxState) {
+    finishTimelineSelection();
+    return;
+  }
+  if (previewDragState) {
+    await finishPreviewDrag();
+    return;
+  }
+  if (timelineDragState) {
+    await finishTimelineClipMove();
+    return;
+  }
+  if (trimState) await finishTimelineTrim();
+});
+
+document.addEventListener('pointerup', async event => {
+  if (assetPointerDragState) {
+    await finishAssetPointerDrag(event);
+  }
+});
+
+applyStoredPanelSizes();
+syncProjectCanvasControls();
+renderTimeline();
+if (!activeVisualSignature(playheadTime) && firstVisibleClipTime() > 0) setPlayhead(firstVisibleClipTime());
+else renderTimelineCompositePreview();
+updatePlayerTime();
+resizePreviewStage();
+</script>
+{% endif %}
+{% endblock %}

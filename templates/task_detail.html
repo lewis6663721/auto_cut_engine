@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-7xl">
+  <a href="/tasks" class="text-lg font-semibold text-slate-600 transition hover:text-slate-300">← 返回任务中心</a>
+  <div class="mt-6 flex items-center gap-4">
+    <h1 class="text-5xl font-black text-white">📋 任务 #{{ task.id }}</h1>
+    <span id="statusBadge" class="rounded-full px-4 py-1 text-lg font-black status-{{ task.status }}">
+      {% if task.status == "success" %}✅ 已完成{% elif task.status == "failed" %}❌ 失败{% elif task.status == "processing" %}🔄 渲染中{% else %}⌛ 排队中{% endif %}
+    </span>
+  </div>
+
+  <div class="soft-card mt-9 grid gap-8 px-8 py-7 md:grid-cols-4">
+    <div>
+      <div class="text-sm font-bold text-slate-700">模板</div>
+      <div class="mt-2 text-xl font-black text-slate-300">{{ task.template.name if task.template else "-" }}</div>
+    </div>
+    <div>
+      <div class="text-sm font-bold text-slate-700">用户</div>
+      <div class="mt-2 text-xl font-black text-slate-300">{{ task.user.username if task.user else "-" }}</div>
+    </div>
+    <div>
+      <div class="text-sm font-bold text-slate-700">创建时间</div>
+      <div class="mt-2 text-xl font-black text-slate-300">{{ task.created_at.strftime("%Y-%m-%d %H:%M:%S") if task.created_at else "-" }}</div>
+    </div>
+    <div>
+      <div class="text-sm font-bold text-slate-700">进度</div>
+      <div class="mt-2 text-xl font-black text-slate-300" id="progressText">{{ task.progress }}%</div>
+      <div class="mt-1 text-sm font-bold text-slate-600" id="stageText">{{ (task.ai_context or {}).get("progress_stage", "等待调度") }}</div>
+    </div>
+  </div>
+
+  <section id="preview" class="soft-card mt-8 p-7">
+    <h2 class="mb-5 text-2xl font-black text-slate-200">🎬 成品预览</h2>
+    {% if task.result_url %}
+      <video controls src="{{ task.result_url }}" class="aspect-video w-full rounded-lg bg-black"></video>
+      <div class="mt-4 flex gap-4 text-lg font-black">
+        <a class="text-cyan-300" href="{{ task.result_url }}" download>⬇ 下载成品</a>
+        <span class="text-slate-700">·</span>
+        {% if source_url %}<a class="text-slate-600" href="{{ source_url }}">查看原片</a>{% endif %}
+      </div>
+    {% else %}
+      <div class="grid aspect-video place-items-center rounded-lg border border-dashed border-slate-800 text-lg font-semibold text-slate-600">
+        渲染完成后显示成品预览
+      </div>
+    {% endif %}
+    <div class="mt-5 h-2 rounded-full bg-slate-900"><div id="bar" class="h-2 rounded-full bg-cyan-400" style="width: {{ task.progress }}%"></div></div>
+    {% if task.error_log %}<pre class="mt-5 whitespace-pre-wrap rounded-lg bg-red-950/30 p-4 text-sm text-red-200">{{ task.error_log }}</pre>{% endif %}
+  </section>
+
+  <section class="soft-card mt-8 overflow-hidden">
+    <h2 class="px-7 py-6 text-2xl font-black text-slate-200">✂️ 剪辑详情 ({{ details|length }})</h2>
+    <div class="overflow-auto">
+      <table class="w-full min-w-[980px] text-left text-base">
+        <thead class="border-y border-slate-800 text-sm font-black text-slate-700">
+          <tr><th class="p-5">#</th><th class="p-5">原视频时间点</th><th class="p-5">剪辑类型</th><th class="p-5">影响</th><th class="p-5">剪辑详情</th><th class="p-5">剪辑原因</th><th class="p-5">来源</th></tr>
+        </thead>
+        <tbody class="divide-y divide-slate-900">
+          {% for item in details %}
+            <tr>
+              <td class="p-5 text-slate-600">{{ loop.index }}</td>
+              <td class="p-5 font-mono font-black text-cyan-300">{{ "%.2f"|format(item.start_time) }} → <span class="text-slate-500">{{ "%.2f"|format(item.end_time) }}</span></td>
+              <td class="p-5"><span class="rounded-full bg-cyan-950/50 px-4 py-1 font-black text-cyan-300">{{ item.edit_type }}</span></td>
+              <td class="p-5 text-slate-400">{{ "🎬" if item.affects == "video" else "🔊" if item.affects == "audio" else "🎬🔊" }}</td>
+              <td class="p-5 font-semibold text-slate-400">{{ item.edit_detail }}</td>
+              <td class="p-5 font-semibold text-slate-500">{{ item.edit_reason }}</td>
+              <td class="p-5"><span class="rounded-md bg-slate-900 px-3 py-1 font-bold text-slate-500">{{ item.source }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="p-8 text-center text-slate-600">渲染完成后生成剪辑详情</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <details class="soft-card mt-8 p-6 text-lg font-bold text-slate-500">
+    <summary class="cursor-pointer">▶ 🔧 查看完整配置 JSON</summary>
+    <pre class="mt-5 overflow-auto rounded-lg bg-slate-950 p-5 text-sm font-normal text-slate-400">{{ task.applied_config }}</pre>
+  </details>
+</section>
+<script>
+async function poll(){
+  const res = await fetch('/api/task/{{ task.id }}/progress');
+  if(!res.ok) return;
+  const data = await res.json();
+  document.getElementById('bar').style.width = data.progress + '%';
+  document.getElementById('progressText').textContent = data.progress + '%';
+  document.getElementById('stageText').textContent = data.stage || '';
+  const badge = document.getElementById('statusBadge');
+  const labels = {pending: '⌛ 排队中', processing: '🔄 渲染中', success: '✅ 已完成', failed: '❌ 失败'};
+  badge.className = `rounded-full px-4 py-1 text-lg font-black status-${data.status}`;
+  badge.textContent = labels[data.status] || data.status;
+  if(data.status === 'pending' || data.status === 'processing') {
+    setTimeout(poll, 1500);
+  } else if (data.status === 'success' && !document.querySelector('#preview video')) {
+    window.location.reload();
+  }
+}
+poll();
+</script>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_dimension_panel.html" import dimension_panel %}
+{% block content %}
+<form method="post" action="/template/{{ template.id }}/render" enctype="multipart/form-data">
+  <div class="mb-8 grid gap-8 lg:grid-cols-[520px_1fr]">
+    <section class="soft-card overflow-hidden">
+      <a href="/template/{{ template.id }}/demo" class="demo-thumb block" data-label="{{ template.name }}">
+        <span class="absolute right-4 top-4 z-10 rounded-md bg-slate-950/62 px-3 py-2 text-sm font-bold text-cyan-300 backdrop-blur">Demo 对比 →</span>
+      </a>
+      <div class="p-7">
+        <div class="text-base font-black text-cyan-300">{{ template.category }}</div>
+        <h1 class="mt-3 text-4xl font-black text-white">{{ template.name }}</h1>
+        <p class="mt-4 text-lg font-semibold leading-8 text-slate-500">{{ template.description }}</p>
+        <a href="/template/{{ template.id }}/demo" class="muted-button mt-6 inline-flex rounded-lg px-4 py-3 text-sm font-black">查看原片/成片对比</a>
+      </div>
+    </section>
+
+    <section class="soft-card p-8">
+      <div class="mb-6 flex items-center gap-4">
+        <span class="grid h-10 w-10 place-items-center rounded-full bg-cyan-400/16 text-xl font-black text-cyan-300">1</span>
+        <h2 class="text-3xl font-black text-white">上传视频</h2>
+      </div>
+      <label class="grid min-h-[240px] cursor-pointer place-items-center rounded-2xl border-2 border-dashed border-slate-800 transition hover:border-cyan-400/50">
+        <input id="sourceVideo" type="file" name="source_video" accept="video/*" required class="hidden">
+        <span class="text-center">
+          <span class="block text-6xl">📁</span>
+          <span id="sourceName" class="mt-6 block text-xl font-black text-slate-500">点击或拖拽视频文件到此处</span>
+          <span class="mt-2 block text-base font-semibold text-slate-700">支持 MP4 / MOV / AVI，建议 1080p 以下</span>
+        </span>
+      </label>
+      <button class="gradient-action mt-7 w-full rounded-xl px-8 py-4 text-xl font-black">提交渲染</button>
+    </section>
+  </div>
+
+  <section class="soft-card p-8">
+    <div class="mb-7 flex items-center gap-4">
+      <span class="grid h-10 w-10 place-items-center rounded-full bg-purple-400/16 text-xl font-black text-purple-300">2</span>
+      <h2 class="text-3xl font-black text-white">维度配置</h2>
+      <span class="text-base font-semibold text-slate-600">配置来自维度注册表</span>
+    </div>
+    {{ dimension_panel(dimensions, config) }}
+  </section>
+</form>
+<script>
+const sourceInput = document.getElementById('sourceVideo');
+const sourceName = document.getElementById('sourceName');
+sourceInput.addEventListener('change', () => {
+  sourceName.textContent = sourceInput.files[0] ? sourceInput.files[0].name : '点击或拖拽视频文件到此处';
+});
+</script>
+{% endblock %}

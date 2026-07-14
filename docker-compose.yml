@@ -1,0 +1,78 @@
+services:
+  web:
+    build: .
+    image: auto-cut-engine:latest
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - media_data:/app/media
+    ports:
+      - "127.0.0.1:${AUTOCUT_HOST_PORT:-18080}:8000"
+    command: >
+      uvicorn main:app
+      --host 0.0.0.0
+      --port 8000
+      --proxy-headers
+      --forwarded-allow-ips "*"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    image: auto-cut-engine:latest
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      web:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - media_data:/app/media
+    command: celery -A tasks worker -Q celery,render --loglevel=info --concurrency=1
+
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  media_data:
+  mysql_data:
+  redis_data:

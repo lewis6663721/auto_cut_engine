@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <h1 class="page-title font-black text-white">{% if user and user.is_admin %}👑 全局任务中心{% else %}📋 任务中心{% endif %}</h1>
+      <p class="mt-4 text-base font-semibold text-slate-600">{% if user and user.is_admin %}管理员视图 - 可查看所有用户任务{% else %}查看你的自动剪辑任务{% endif %}</p>
+    </div>
+    <div class="flex flex-wrap gap-3">
+      {% for value, label in [("all", "全部"), ("pending", "⌛ 排队"), ("processing", "🔄 渲染中"), ("success", "✅ 完成"), ("failed", "❌ 失败")] %}
+        <a href="/tasks{% if value != 'all' %}?status={{ value }}{% endif %}" class="{% if status_filter == value or (not status_filter and value == 'all') %}gradient-action{% else %}muted-button{% endif %} rounded-xl px-5 py-3 text-sm font-black md:text-base">{{ label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="space-y-4">
+    {% for task in tasks %}
+      <article class="soft-card task-row flex flex-col gap-5 px-6 py-5 lg:flex-row lg:items-center lg:justify-between" data-task-id="{{ task.id }}" data-status="{{ task.status }}">
+        <div>
+          <div class="flex flex-wrap items-center gap-3">
+            <h2 class="text-xl font-black text-white">{{ task.template.name if task.template else "未绑定模板" }}</h2>
+            <span class="text-sm font-semibold text-slate-600">· {{ task.user.username if task.user else "" }} · {{ task.created_at.strftime("%m-%d %H:%M") if task.created_at else "" }}</span>
+          </div>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <span class="task-status inline-flex rounded-full px-3 py-1 text-sm font-black status-{{ task.status }}">
+              {% if task.status == "success" %}✅ 已完成{% elif task.status == "failed" %}❌ 失败{% elif task.status == "processing" %}🔄 渲染中{% else %}⌛ 排队中{% endif %}
+            </span>
+            <span class="task-progress-text text-sm font-black text-cyan-300">{{ task.progress }}%</span>
+            <span class="task-stage text-sm font-bold text-slate-500">{{ (task.ai_context or {}).get("progress_stage", "等待调度") }}</span>
+          </div>
+          <div class="mt-3 h-2 w-full max-w-md rounded-full bg-slate-900">
+            <div class="task-progress-bar h-2 rounded-full bg-cyan-400 transition-all" style="width: {{ task.progress }}%"></div>
+          </div>
+        </div>
+        <div class="task-actions flex flex-wrap gap-3 lg:justify-end">
+          <a href="/task/{{ task.id }}" class="muted-button rounded-xl px-4 py-3 text-sm font-black">📋 详情</a>
+          {% if task.result_url %}
+            <a href="/task/{{ task.id }}#preview" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">▶ 内嵌预览</a>
+            <a href="{{ task.result_url }}" class="muted-button rounded-xl px-4 py-3 text-sm font-black" download>⬇ 下载</a>
+          {% else %}
+            <span class="muted-button cursor-not-allowed rounded-xl px-4 py-3 text-sm font-black opacity-50">▶ 等待成片</span>
+          {% endif %}
+          <form method="post" action="/task/{{ task.id }}/rerun">
+            <button class="muted-button rounded-xl px-4 py-3 text-sm font-black" type="submit">↻ 重跑</button>
+          </form>
+        </div>
+      </article>
+    {% else %}
+      <div class="soft-card p-10 text-center text-base font-semibold text-slate-600">没有符合条件的任务</div>
+    {% endfor %}
+  </div>
+</section>
+<script>
+const statusLabels = {
+  pending: '⌛ 排队中',
+  processing: '🔄 渲染中',
+  success: '✅ 已完成',
+  failed: '❌ 失败',
+};
+
+function updateRow(row, task) {
+  const previousStatus = row.dataset.status;
+  row.dataset.status = task.status;
+  const statusEl = row.querySelector('.task-status');
+  statusEl.className = `task-status inline-flex rounded-full px-3 py-1 text-sm font-black status-${task.status}`;
+  statusEl.textContent = statusLabels[task.status] || task.status;
+  row.querySelector('.task-progress-text').textContent = `${task.progress}%`;
+  const stage = row.querySelector('.task-stage');
+  if (stage) stage.textContent = task.stage || '';
+  row.querySelector('.task-progress-bar').style.width = `${task.progress}%`;
+  if ((task.status === 'success' || task.status === 'failed') && previousStatus !== task.status) {
+    window.location.reload();
+  }
+}
+
+async function pollTaskRows() {
+  const rows = Array.from(document.querySelectorAll('.task-row'));
+  const activeRows = rows.filter(row => ['pending', 'processing'].includes(row.dataset.status));
+  if (!activeRows.length) return;
+  const ids = activeRows.map(row => row.dataset.taskId).join(',');
+  const res = await fetch(`/api/tasks/progress?ids=${ids}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  data.tasks.forEach(task => {
+    const row = document.querySelector(`.task-row[data-task-id="${task.id}"]`);
+    if (row) updateRow(row, task);
+  });
+  setTimeout(pollTaskRows, 1500);
+}
+
+pollTaskRows();
+</script>
+{% endblock %}

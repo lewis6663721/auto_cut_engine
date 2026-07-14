@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-6xl">
+  <a href="/" class="text-sm font-bold text-slate-600 transition hover:text-slate-300">← 返回首页</a>
+  <div class="mt-5 flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="page-title font-black text-white">{{ template.name }} Demo 对比</h1>
+      <p class="mt-3 text-base font-semibold text-slate-500">{{ demo.label }}</p>
+    </div>
+    <a href="/template/{{ template.id }}" class="gradient-action rounded-xl px-6 py-3 text-base font-black">使用该模板</a>
+  </div>
+
+  <div class="mt-8 grid gap-6 lg:grid-cols-2">
+    <section class="soft-card p-5">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-xl font-black text-white">原视频</h2>
+        <span class="tag-pill">before</span>
+      </div>
+      <div class="media-frame">
+        <video controls preload="metadata" src="{{ demo.original }}"></video>
+      </div>
+      <p class="mt-4 text-sm font-semibold leading-6 text-slate-600">未套用模板的占位素材，后续可在后台替换为真实案例。</p>
+    </section>
+
+    <section class="soft-card p-5">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="text-xl font-black text-white">剪辑后视频</h2>
+        <span class="tag-pill text-cyan-300">after</span>
+      </div>
+      <div class="media-frame">
+        <video controls preload="metadata" src="{{ demo.result }}"></video>
+      </div>
+      <p class="mt-4 text-sm font-semibold leading-6 text-slate-600">模拟使用该模板后的效果：色彩、节奏、转场或音效会更明显。</p>
+    </section>
+  </div>
+
+  <section class="soft-card mt-6 p-6">
+    <h2 class="text-xl font-black text-white">这个模板大概做了什么</h2>
+    <div class="mt-4 flex flex-wrap gap-2">
+      {% for key, item in config.items() if item.enabled %}
+        <span class="tag-pill">
+          {% if key == "cinematic_lut" %}电影感调色
+          {% elif key == "particle_vfx" %}粒子特效
+          {% elif key == "motion_blur" %}动态模糊
+          {% elif key == "auto_speedup" %}节奏加速
+          {% elif key == "smooth_transition" %}流畅转场
+          {% elif key == "deep_filter_voice" %}人声降噪
+          {% elif key == "sfx_auto_layer" %}环境音效
+          {% else %}{{ key }}{% endif %}
+        </span>
+      {% endfor %}
+    </div>
+  </section>
+</section>
+{% endblock %}

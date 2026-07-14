@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "AutoCut Engine" }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/static/css/app.css?v=20260713-editor">
+</head>
+<body class="min-h-screen text-slate-100">
+  <header class="sticky top-0 z-40 app-nav">
+    <nav class="app-shell flex h-full flex-col items-start justify-center gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <a href="/" class="flex items-center gap-3 text-xl font-extrabold tracking-tight md:text-2xl">
+        <span class="text-2xl leading-none md:text-3xl">🎬</span>
+        <span class="brand-text">AutoCut Engine</span>
+      </a>
+      <div class="flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-400 sm:justify-end md:gap-6 md:text-base">
+        <a class="transition hover:text-slate-100" href="/">首页</a>
+        {% if user %}
+        <a class="transition hover:text-slate-100" href="/editor">剪辑台</a>
+        <a class="transition hover:text-slate-100" href="/creative">🎨 创意坊</a>
+        <a class="transition hover:text-slate-100" href="/tasks">任务中心</a>
+        {% endif %}
+        {% if user and user.is_admin %}
+          <a class="transition hover:text-slate-100" href="/admin">⚙ 管理后台</a>
+        {% endif %}
+        {% if user %}
+          <span class="hidden text-slate-300 sm:inline">👑 {{ user.username }}</span>
+          <a class="text-slate-500 transition hover:text-slate-200" href="/logout">退出</a>
+        {% else %}
+          <a class="transition hover:text-slate-100" href="/login">登录</a>
+        {% endif %}
+      </div>
+    </nav>
+  </header>
+  <main class="app-shell page-block">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="border-t border-slate-800/70 py-8 text-center text-sm text-slate-600">
+    AutoCut Engine 1.0 - 将人类顶级剪辑经验代码化、资产化、自动化
+  </footer>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

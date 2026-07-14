@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% from "_dimension_panel.html" import dimension_panel %}
+{% block content %}
+<form method="post" action="/admin/template/save" class="grid gap-5 lg:grid-cols-[360px_1fr]">
+  <aside class="glass rounded-md p-5">
+    <h1 class="text-xl font-semibold">{{ "编辑模板" if template.id else "新建模板" }}</h1>
+    <input type="hidden" name="template_id" value="{{ template.id or 0 }}">
+    <div class="mt-5 grid gap-3">
+      <label class="grid gap-1 text-sm text-slate-300">名称<input name="name" value="{{ template.name }}" required class="rounded border border-slate-700 bg-slate-950 px-3 py-2"></label>
+      <label class="grid gap-1 text-sm text-slate-300">类型
+        <select name="category" class="rounded border border-slate-700 bg-slate-950 px-3 py-2">
+          {% for value in ["general", "personalized", "multi_scene"] %}<option value="{{ value }}" {% if template.category == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="grid gap-1 text-sm text-slate-300">排序<input type="number" name="sort_order" value="{{ template.sort_order or 0 }}" class="rounded border border-slate-700 bg-slate-950 px-3 py-2"></label>
+      <label class="grid gap-1 text-sm text-slate-300">描述<textarea name="description" rows="6" class="rounded border border-slate-700 bg-slate-950 px-3 py-2">{{ template.description }}</textarea></label>
+    </div>
+    <button class="mt-5 w-full rounded bg-cyan-400 px-4 py-2 font-semibold text-slate-950">保存</button>
+  </aside>
+  <section class="glass rounded-md p-5">
+    <h2 class="mb-4 font-semibold">默认维度</h2>
+    {{ dimension_panel(dimensions, config) }}
+  </section>
+</form>
+{% endblock %}
+

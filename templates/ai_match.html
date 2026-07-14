@@ -1,0 +1,404 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-6xl">
+  <div class="mb-8 flex items-center gap-5">
+    <span class="icon-gradient grid h-16 w-16 place-items-center rounded-2xl text-3xl">🤖</span>
+    <div>
+      <h1 class="page-title font-black text-white">AI 智能匹配</h1>
+      <p class="mt-2 text-base font-semibold text-slate-500">上传图片、音频或视频，先在页面确认素材，再由 AI 推荐模板和效果配置</p>
+    </div>
+  </div>
+
+  <div class="mb-8 inline-flex rounded-2xl border border-slate-800 bg-slate-950/40 p-2">
+    <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black md:text-base">🤖 AI 智能匹配</button>
+    <a href="/" class="px-5 py-3 text-sm font-black text-slate-500 md:text-base">✋ 手动选择模板</a>
+  </div>
+
+  <div id="uploadPanel" class="soft-card p-7">
+    <div class="mb-6 flex items-center gap-4">
+      <span class="grid h-9 w-9 place-items-center rounded-full bg-cyan-400/16 text-base font-black text-cyan-300">1</span>
+      <h2 class="text-2xl font-black text-white">上传素材</h2>
+    </div>
+    <form id="aiForm">
+      <label class="grid min-h-[260px] cursor-pointer place-items-center rounded-2xl border-2 border-dashed border-slate-800 transition hover:border-cyan-400/50">
+        <input id="aiVideo" type="file" name="video" accept="image/*,audio/*,video/*" required class="hidden">
+        <span class="text-center">
+          <span class="block text-6xl">📁</span>
+          <span id="fileName" class="mt-6 block text-xl font-black text-slate-500">点击或拖拽素材文件到此处</span>
+          <span class="mt-2 block text-base font-semibold text-slate-700">支持图片 / 音频 / 视频，上传后可直接预览确认</span>
+        </span>
+      </label>
+      <div id="selectedFileCard" class="mt-5 hidden rounded-xl border border-cyan-500/25 bg-cyan-950/10 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div class="text-sm font-bold text-slate-600">已选择素材</div>
+            <div id="selectedFileName" class="mt-1 text-base font-black text-cyan-300">-</div>
+          </div>
+          <div id="selectedFileMeta" class="text-sm font-bold text-slate-500">-</div>
+        </div>
+        <div id="selectedPreview" class="mt-4 overflow-hidden rounded-xl border border-slate-800 bg-black/40"></div>
+      </div>
+
+      <div id="analysisProgress" class="mt-6 hidden rounded-xl border border-slate-800 bg-slate-950/45 p-4">
+        <div class="mb-3 flex items-center justify-between gap-4">
+          <div id="analysisStep" class="text-sm font-black text-slate-300">等待开始</div>
+          <div id="analysisPercent" class="font-mono text-sm font-black text-cyan-300">0%</div>
+        </div>
+        <div class="h-2 rounded-full bg-slate-900">
+          <div id="analysisBar" class="h-2 rounded-full bg-cyan-400 transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <div id="analysisHint" class="mt-3 text-xs font-semibold text-slate-600">选择素材后点击开始分析</div>
+      </div>
+
+      <button id="analyzeButton" class="gradient-action mt-7 rounded-xl px-7 py-3 text-base font-black disabled:cursor-not-allowed disabled:opacity-60" disabled>请选择视频</button>
+    </form>
+  </div>
+
+  <section id="resultPanel" class="hidden space-y-7">
+    <div class="soft-card p-6">
+      <div class="mb-5 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <span class="grid h-8 w-8 place-items-center rounded-full bg-cyan-400/16 text-sm font-black text-cyan-300">2</span>
+          <h2 class="text-2xl font-black text-white">AI 分析结果</h2>
+        </div>
+        <span id="confidenceBadge" class="rounded-full bg-cyan-950/50 px-4 py-1 text-sm font-black text-cyan-300">置信度 --</span>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-3">
+        <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+          <div class="text-xs font-bold text-slate-700">内容摘要</div>
+          <p id="contentSummary" class="mt-2 text-sm font-semibold leading-6 text-slate-300">-</p>
+        </div>
+        <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+          <div class="text-xs font-bold text-slate-700">氛围</div>
+          <p id="moodText" class="mt-2 text-sm font-black text-slate-300">-</p>
+        </div>
+        <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+          <div class="text-xs font-bold text-slate-700">节奏</div>
+          <p id="pacingText" class="mt-2 text-sm font-black text-slate-300">-</p>
+        </div>
+      </div>
+
+      <div class="mt-5 rounded-xl border border-cyan-500/25 bg-cyan-950/12 p-5">
+        <div class="mb-3 text-sm font-bold text-slate-500">📌 推荐模板</div>
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 id="templateName" class="text-xl font-black text-white">-</h3>
+            <p id="templateReason" class="mt-2 text-sm font-semibold leading-6 text-slate-500">-</p>
+          </div>
+          <button id="useRecommendButton" class="muted-button rounded-lg px-4 py-3 text-sm font-black" type="button">使用推荐</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="soft-card p-6">
+      <div class="mb-5 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <span class="grid h-8 w-8 place-items-center rounded-full bg-cyan-400/16 text-sm font-black text-cyan-300">3</span>
+          <h2 class="text-2xl font-black text-white">推荐效果配置</h2>
+        </div>
+        <span class="text-sm font-bold text-slate-700">点击开关可调整</span>
+      </div>
+      <div id="dimensionList" class="space-y-3"></div>
+    </div>
+
+    <div class="soft-card p-6">
+      <h2 class="text-2xl font-black text-white">⏱ 关键时刻建议</h2>
+      <div id="keyMomentList" class="mt-5 space-y-3"></div>
+    </div>
+
+    <div class="soft-card p-6">
+      <h2 class="text-2xl font-black text-white">🗂 场景分割方案</h2>
+      <div id="sceneList" class="mt-5 space-y-3"></div>
+    </div>
+
+    <form id="renderForm" method="post" action="/ai-match/render" class="flex flex-wrap gap-4">
+      <input type="hidden" name="template_id" id="renderTemplateId">
+      <input type="hidden" name="uploaded_path" id="renderUploadedPath">
+      <input type="hidden" name="uploaded_name" id="renderUploadedName">
+      <input type="hidden" name="ai_context" id="renderAiContext">
+      <button class="gradient-action flex-1 rounded-xl px-7 py-4 text-base font-black" type="submit">🚀 应用配置并开始智造</button>
+      <button id="resetButton" class="muted-button rounded-xl px-7 py-4 text-base font-black" type="button">重新分析</button>
+    </form>
+  </section>
+</section>
+
+<script>
+const form = document.getElementById('aiForm');
+const input = document.getElementById('aiVideo');
+const fileName = document.getElementById('fileName');
+const analyzeButton = document.getElementById('analyzeButton');
+const selectedFileCard = document.getElementById('selectedFileCard');
+const selectedFileName = document.getElementById('selectedFileName');
+const selectedFileMeta = document.getElementById('selectedFileMeta');
+const selectedPreview = document.getElementById('selectedPreview');
+const analysisProgress = document.getElementById('analysisProgress');
+const analysisStep = document.getElementById('analysisStep');
+const analysisPercent = document.getElementById('analysisPercent');
+const analysisBar = document.getElementById('analysisBar');
+const analysisHint = document.getElementById('analysisHint');
+const uploadPanel = document.getElementById('uploadPanel');
+const resultPanel = document.getElementById('resultPanel');
+const dimensionList = document.getElementById('dimensionList');
+const keyMomentList = document.getElementById('keyMomentList');
+const sceneList = document.getElementById('sceneList');
+const renderAiContext = document.getElementById('renderAiContext');
+const renderTemplateId = document.getElementById('renderTemplateId');
+const renderUploadedPath = document.getElementById('renderUploadedPath');
+const renderUploadedName = document.getElementById('renderUploadedName');
+let aiResult = null;
+let progressTimer = null;
+let previewUrl = null;
+
+const analysisStages = [
+  { percent: 8, step: '已接收素材', hint: '正在准备上传文件...' },
+  { percent: 22, step: '上传素材', hint: '素材正在发送到后端...' },
+  { percent: 38, step: '抽取关键帧', hint: 'FFmpeg 正在从视频中抽取画面样本...' },
+  { percent: 58, step: '调用大模型', hint: '正在把关键帧发送给视觉模型分析...' },
+  { percent: 76, step: '解析剪辑建议', hint: '正在校验模型返回的模板、维度和关键时刻...' },
+  { percent: 90, step: '生成推荐配置', hint: '正在整理可调整的效果开关...' },
+];
+
+const dimensionLabels = {
+  cinematic_lut: ['🎨', '电影调色', '3D LUT 色彩变换'],
+  particle_vfx: ['✨', '粒子特效', '粒子层叠加'],
+  motion_blur: ['🎞️', '插帧流畅', '30fps→60fps'],
+  auto_speedup: ['⚡', '节奏加速', '自动加速'],
+  smooth_transition: ['🔄', '渐进转场', '缩放过渡'],
+  deep_filter_voice: ['🎙️', '人声增强', '降噪+清晰化'],
+  sfx_auto_layer: ['🔊', '音效垫底', '自动音效叠加'],
+};
+
+input.addEventListener('change', () => {
+  const file = input.files[0];
+  if (!file) {
+    fileName.textContent = '点击或拖拽素材文件到此处';
+    selectedFileCard.classList.add('hidden');
+    selectedPreview.innerHTML = '';
+    analyzeButton.disabled = true;
+    analyzeButton.textContent = '请选择素材';
+    return;
+  }
+  fileName.textContent = `已选择：${file.name}`;
+  selectedFileName.textContent = file.name;
+  selectedFileMeta.textContent = `${formatBytes(file.size)} · ${file.type || detectFileKind(file)}`;
+  renderLocalPreview(file);
+  selectedFileCard.classList.remove('hidden');
+  analysisProgress.classList.remove('hidden');
+  setProgress(0, '素材已选择', '请先在上方预览确认是否选错，再点击开始分析');
+  analyzeButton.disabled = false;
+  analyzeButton.textContent = '开始分析';
+});
+
+function detectFileKind(file) {
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('audio/')) return 'audio';
+  if (file.type.startsWith('video/')) return 'video';
+  const name = file.name.toLowerCase();
+  if (/\.(jpg|jpeg|png|webp|bmp)$/.test(name)) return 'image';
+  if (/\.(mp3|wav|m4a|aac|flac|ogg)$/.test(name)) return 'audio';
+  return 'video';
+}
+
+function renderLocalPreview(file) {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = URL.createObjectURL(file);
+  const kind = detectFileKind(file);
+  if (kind === 'image') {
+    selectedPreview.innerHTML = `<img src="${previewUrl}" alt="上传图片预览" class="max-h-[360px] w-full object-contain bg-black">`;
+  } else if (kind === 'audio') {
+    selectedPreview.innerHTML = `<div class="p-5"><audio controls src="${previewUrl}" class="w-full"></audio><p class="mt-3 text-xs font-semibold text-slate-600">请试听确认音频是否正确。当前版本音频可分析为声音参考，暂不直接渲染视频。</p></div>`;
+  } else {
+    selectedPreview.innerHTML = `<video controls src="${previewUrl}" class="max-h-[420px] w-full bg-black"></video>`;
+  }
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function setProgress(percent, step, hint) {
+  analysisBar.style.width = `${percent}%`;
+  analysisPercent.textContent = `${percent}%`;
+  analysisStep.textContent = step;
+  analysisHint.textContent = hint;
+}
+
+function startProgressSimulation() {
+  analysisProgress.classList.remove('hidden');
+  let index = 0;
+  setProgress(analysisStages[0].percent, analysisStages[0].step, analysisStages[0].hint);
+  clearInterval(progressTimer);
+  progressTimer = setInterval(() => {
+    index += 1;
+    if (index >= analysisStages.length) {
+      clearInterval(progressTimer);
+      return;
+    }
+    const stage = analysisStages[index];
+    setProgress(stage.percent, stage.step, stage.hint);
+  }, 1800);
+}
+
+function completeProgress() {
+  clearInterval(progressTimer);
+  setProgress(100, '分析完成', '已生成推荐模板、效果配置、关键时刻和场景分割方案');
+}
+
+function failProgress(message) {
+  clearInterval(progressTimer);
+  setProgress(100, '分析失败', message || '请稍后重试');
+  analysisBar.classList.remove('bg-cyan-400');
+  analysisBar.classList.add('bg-red-400');
+}
+
+function syncContext() {
+  renderAiContext.value = JSON.stringify(aiResult);
+}
+
+function renderDimensions() {
+  dimensionList.innerHTML = '';
+  const notes = aiResult.dimension_notes || [];
+  const groups = [
+    ['visual_style', '视觉风格'],
+    ['pacing_control', '节奏控制'],
+    ['sound_design', '声音设计'],
+  ];
+  groups.forEach(([groupKey, groupLabel]) => {
+    const groupItems = notes.filter(item => item.group_key === groupKey);
+    if (!groupItems.length) return;
+    const title = document.createElement('div');
+    title.className = 'pt-3 text-sm font-black text-slate-700';
+    title.textContent = groupLabel;
+    dimensionList.appendChild(title);
+
+    groupItems.forEach(item => {
+      const config = aiResult.dimension_config[item.key] || { enabled: false, params: {} };
+      const [icon, label, sub] = dimensionLabels[item.key] || ['•', item.label, item.description || ''];
+      const row = document.createElement('div');
+      row.className = 'flex items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4';
+      row.innerHTML = `
+        <div class="flex items-center gap-4">
+          <span class="text-xl">${icon}</span>
+          <div>
+            <div class="font-black text-slate-200">${label}</div>
+            <div class="mt-1 text-xs font-semibold text-slate-600">${sub}</div>
+          </div>
+        </div>
+        <button type="button" data-key="${item.key}" class="toggle-btn relative h-6 w-11 rounded-full ${config.enabled ? 'bg-cyan-400' : 'bg-slate-700'}">
+          <span class="absolute top-1 h-4 w-4 rounded-full bg-white transition ${config.enabled ? 'left-6' : 'left-1'}"></span>
+        </button>
+      `;
+      dimensionList.appendChild(row);
+    });
+  });
+
+  document.querySelectorAll('.toggle-btn').forEach(button => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.key;
+      aiResult.dimension_config[key].enabled = !aiResult.dimension_config[key].enabled;
+      const note = aiResult.dimension_notes.find(item => item.key === key);
+      if (note) note.enabled = aiResult.dimension_config[key].enabled;
+      renderDimensions();
+      syncContext();
+    });
+  });
+}
+
+function renderMoments() {
+  keyMomentList.innerHTML = '';
+  (aiResult.key_moments || []).forEach(moment => {
+    const row = document.createElement('div');
+    row.className = 'grid gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4 md:grid-cols-[72px_1fr_110px]';
+    row.innerHTML = `
+      <div class="font-mono text-sm font-black text-cyan-300">${Number(moment.time || 0).toFixed(1)}s</div>
+      <div>
+        <div class="font-black text-slate-200">${moment.label || '-'}</div>
+        <div class="mt-1 text-xs font-semibold leading-5 text-slate-600">${moment.reason || ''}</div>
+      </div>
+      <div class="text-right text-sm font-black text-slate-500">${moment.action || '建议'}</div>
+    `;
+    keyMomentList.appendChild(row);
+  });
+}
+
+function renderScenes() {
+  sceneList.innerHTML = '';
+  (aiResult.scenes || []).forEach(scene => {
+    const row = document.createElement('div');
+    row.className = 'grid gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4 md:grid-cols-[130px_1fr]';
+    const start = Number(scene.start || 0).toFixed(1);
+    const end = Number(scene.end || 0).toFixed(1);
+    row.innerHTML = `
+      <div class="font-mono text-sm font-black text-purple-300">${start}s - ${end}s</div>
+      <div>
+        <div class="font-black text-slate-200">🎬 ${scene.name || '场景'}</div>
+        <div class="mt-1 text-xs font-semibold leading-5 text-slate-600">${scene.summary || '按段套用推荐剪辑策略'}</div>
+      </div>
+    `;
+    sceneList.appendChild(row);
+  });
+}
+
+function renderResult() {
+  document.getElementById('confidenceBadge').textContent = `置信度 ${Math.round((aiResult.confidence || 0) * 100)}%`;
+  document.getElementById('contentSummary').textContent = aiResult.content_summary || aiResult.summary || '-';
+  document.getElementById('moodText').textContent = aiResult.mood || '-';
+  document.getElementById('pacingText').textContent = aiResult.pacing || '-';
+  document.getElementById('templateName').textContent = aiResult.recommended_template || '-';
+  document.getElementById('templateReason').textContent = aiResult.recommended_template_reason || aiResult.summary || '-';
+  renderTemplateId.value = aiResult.template_id || '';
+  renderUploadedPath.value = aiResult.uploaded_path || '';
+  renderUploadedName.value = aiResult.uploaded_name || '';
+  const submitButton = document.querySelector('#renderForm button[type="submit"]');
+  if (aiResult.media_type && aiResult.media_type !== 'video') {
+    submitButton.disabled = true;
+    submitButton.classList.add('opacity-60', 'cursor-not-allowed');
+    submitButton.textContent = '当前仅视频素材可开始智造';
+  } else {
+    submitButton.disabled = false;
+    submitButton.classList.remove('opacity-60', 'cursor-not-allowed');
+    submitButton.textContent = '🚀 应用配置并开始智造';
+  }
+  renderDimensions();
+  renderMoments();
+  renderScenes();
+  syncContext();
+  uploadPanel.classList.add('hidden');
+  resultPanel.classList.remove('hidden');
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  analyzeButton.disabled = true;
+  analyzeButton.textContent = '分析中...';
+  analysisBar.classList.remove('bg-red-400');
+  analysisBar.classList.add('bg-cyan-400');
+  startProgressSimulation();
+  try {
+    const data = new FormData(form);
+    const res = await fetch('/api/ai-match', { method: 'POST', body: data });
+    if (!res.ok) throw new Error(`分析接口失败：${res.status}`);
+    aiResult = await res.json();
+    completeProgress();
+    setTimeout(renderResult, 350);
+  } catch (error) {
+    failProgress(error.message);
+    analyzeButton.disabled = false;
+    analyzeButton.textContent = '重新分析';
+  }
+});
+
+document.getElementById('resetButton').addEventListener('click', () => {
+  resultPanel.classList.add('hidden');
+  uploadPanel.classList.remove('hidden');
+});
+
+document.getElementById('useRecommendButton').addEventListener('click', () => {
+  syncContext();
+});
+</script>
+{% endblock %}

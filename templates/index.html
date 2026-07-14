@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-4xl text-center">
+  <h1 class="hero-title font-black tracking-tight">
+    <span class="hero-gradient">将剪辑经验</span>
+    <span class="text-white">代码化</span>
+  </h1>
+  <p class="mx-auto mt-5 max-w-3xl text-base font-semibold leading-7 text-slate-500 md:text-lg">选择模板 → 上传素材 → 调维度 → 开始智造。审美规则数字化，生产力解放，品质一致性保障。</p>
+</section>
+
+<a href="/ai-match" class="soft-card purple-outline mt-12 flex min-h-[118px] items-center justify-between gap-5 px-6 py-6 transition hover:border-purple-400/70 md:px-8">
+  <div class="flex items-center gap-5">
+    <span class="icon-gradient grid h-16 w-16 shrink-0 place-items-center rounded-2xl text-3xl">🤖</span>
+    <span class="text-left">
+      <span class="block text-2xl font-black text-white md:text-3xl">AI 智能匹配</span>
+      <span class="mt-2 block text-sm font-semibold text-slate-500 md:text-base">上传视频，AI 自动分析内容，推荐最佳模板和效果配置</span>
+    </span>
+  </div>
+  <span class="text-4xl text-slate-600">→</span>
+</a>
+
+<section class="mt-14">
+  <div class="mb-7 flex flex-wrap items-end gap-4">
+    <h2 class="section-title flex items-center gap-3 font-black text-white"><span>🎬</span>三大模板体系</h2>
+    <p class="pb-1 text-sm font-semibold text-slate-600">先用 Demo 看效果，再决定是否使用模板</p>
+  </div>
+
+  <div class="grid gap-6 lg:grid-cols-3">
+    {% for category, icon, title, subtitle, label in [
+      ("general", "🎬", "通用模板", "高频标准化类型", "SCIFI - OFFICIAL"),
+      ("personalized", "🎨", "个性化模板", "微调视觉/节奏/声音", "WARM - OFFICIAL"),
+      ("multi_scene", "🗂", "多场景模板", "自动分段匹配", "EPIC - OFFICIAL")
+    ] %}
+      {% for tpl in templates if tpl.category == category %}
+        <article class="soft-card template-card overflow-hidden transition hover:-translate-y-1 hover:border-cyan-400/50">
+          <a href="/template/{{ tpl.id }}/demo" class="demo-thumb block" data-label="{{ label }}">
+            <span class="absolute right-4 top-4 z-10 rounded-md bg-slate-950/62 px-3 py-2 text-sm font-bold text-cyan-300 backdrop-blur">Demo 预览 →</span>
+          </a>
+          <div class="p-5">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <h3 class="text-xl font-black text-white">{{ icon }} {{ title }}</h3>
+              <span class="shrink-0 rounded-md bg-slate-900 px-2 py-1 text-xs font-bold text-slate-500">{{ subtitle }}</span>
+            </div>
+            <h4 class="text-lg font-black text-slate-100">{{ tpl.name }}</h4>
+            <p class="mt-2 min-h-16 text-sm font-semibold leading-6 text-slate-500">{{ tpl.description }}</p>
+            <div class="mt-4 flex flex-wrap gap-2">
+              {% for key, item in tpl.config_schema.items() if item.enabled %}
+                <span class="tag-pill">
+                  {% if key == "cinematic_lut" %}电影感调色
+                  {% elif key == "particle_vfx" %}粒子特效
+                  {% elif key == "motion_blur" %}动态模糊
+                  {% elif key == "auto_speedup" %}自动加速
+                  {% elif key == "smooth_transition" %}流畅转场
+                  {% elif key == "deep_filter_voice" %}人声降噪
+                  {% elif key == "sfx_auto_layer" %}环境音效
+                  {% else %}{{ key }}{% endif %}
+                </span>
+              {% endfor %}
+            </div>
+            <div class="mt-5 grid grid-cols-2 gap-3">
+              <a href="/template/{{ tpl.id }}/demo" class="muted-button rounded-lg px-4 py-3 text-center text-sm font-black">Demo 对比</a>
+              <a href="/template/{{ tpl.id }}" class="gradient-action rounded-lg px-4 py-3 text-center text-sm font-black">使用模板</a>
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
