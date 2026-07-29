@@ -1467,7 +1467,12 @@ async def editor_project_create(
 
 @app.post("/editor/project/{pid}/delete")
 async def editor_project_delete(request: Request, pid: int):
-    _user, project = await assert_project_access(request, pid)
+    user = await require_user(request)
+    project = await TimelineProject.get_or_none(id=pid).prefetch_related("user")
+    if not project:
+        return RedirectResponse("/editor", status_code=303)
+    if not user.is_admin and (not project.user or project.user.id != user.id):
+        raise HTTPException(status_code=404, detail="Project not found")
     await project.delete()
     return RedirectResponse("/editor", status_code=303)
 

@@ -42,6 +42,7 @@ async def test_editor_can_delete_project_from_project_list(client, tmp_path):
 
     assert page.status_code == 200
     assert f'action="/editor/project/{project.id}/delete"' in page.text
+    assert 'class="project-delete-form"' in page.text
 
     response = await client.post(f"/editor/project/{project.id}/delete", follow_redirects=False)
 
@@ -50,6 +51,10 @@ async def test_editor_can_delete_project_from_project_list(client, tmp_path):
     assert await TimelineProject.filter(id=project.id).count() == 0
     assert await TimelineTrack.filter(id=track.id).count() == 0
     assert await TimelineClip.filter(id=clip.id).count() == 0
+
+    repeated = await client.post(f"/editor/project/{project.id}/delete", follow_redirects=False)
+    assert repeated.status_code == 303
+    assert repeated.headers["location"] == "/editor"
 
 
 @pytest.mark.asyncio

@@ -41,7 +41,7 @@
           </a>
           <div class="flex items-center gap-2">
             <span class="tag-pill">{{ item.canvas_width }}x{{ item.canvas_height }}</span>
-            <form method="post" action="/editor/project/{{ item.id }}/delete">
+            <form class="project-delete-form" method="post" action="/editor/project/{{ item.id }}/delete">
               <button class="jy-icon-button jy-danger-button" type="submit" title="删除工程"><i data-lucide="trash-2"></i></button>
             </form>
           </div>
@@ -66,7 +66,7 @@
       <button class="jy-icon-button" type="button" title="布局"><i data-lucide="panel-top"></i></button>
       <button class="jy-icon-button" type="button" title="加叠加轨" id="addTrackBtn"><i data-lucide="layers"></i></button>
       <button class="jy-icon-button" type="button" title="清理空轨道" id="cleanupTracksBtn"><i data-lucide="panel-bottom-close"></i></button>
-      <form method="post" action="/editor/project/{{ project.id }}/delete">
+      <form class="project-delete-form" method="post" action="/editor/project/{{ project.id }}/delete">
         <button class="jy-icon-button jy-danger-button" type="submit" title="删除工程"><i data-lucide="trash-2"></i></button>
       </form>
       <form class="jy-export-form" method="post" action="/editor/project/{{ project.id }}/render">
@@ -4989,4 +4989,11 @@ updatePlayerTime();
 resizePreviewStage();
 </script>
 {% endif %}
+<script>
+document.querySelectorAll('.project-delete-form').forEach(form => {
+  form.addEventListener('submit', () => {
+    form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled');
+  });
+});
+</script>
 {% endblock %}
