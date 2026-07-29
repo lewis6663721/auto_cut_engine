@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <h1 class="page-title font-black text-white">用户中心</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">管理各大模型厂商的 API Key。AI 功能会优先使用你选择的 Provider，调用失败时自动进入本地兜底。</p>
+    </div>
+    <a href="/ai-tools" class="muted-button rounded-xl px-5 py-3 text-sm font-black">AI 工具包</a>
+  </div>
+
+  <div class="grid gap-6 xl:grid-cols-[minmax(0,.95fr)_minmax(0,1.05fr)]">
+    <article class="soft-card tool-card p-6">
+      <div class="tool-card-head">
+        <span class="tool-icon"><i data-lucide="key-round"></i></span>
+        <div>
+          <h2>新增 Provider</h2>
+          <p>支持 ChatGPT、Qwen 3.7 / 百炼、Sedance 和自定义 OpenAI 兼容接口</p>
+        </div>
+      </div>
+      <form class="mt-6 grid gap-4" action="/account/ai-providers" method="post">
+        <label class="tool-field">厂商类型
+          <select id="providerPresetSelect" name="provider_key">
+            {% for key, preset in provider_presets.items() %}
+              <option value="{{ key }}"
+                data-label="{{ preset.label }}"
+                data-base-url="{{ preset.base_url }}"
+                data-chat-model="{{ preset.default_chat_model }}"
+                data-asr-model="{{ preset.default_asr_model }}"
+                data-image-model="{{ preset.default_image_model }}"
+                data-video-model="{{ preset.default_video_model }}"
+                data-model-options='{{ preset.model_options | tojson }}'>
+                {{ preset.label }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="tool-field">显示名称
+          <input id="providerLabelInput" name="label" placeholder="例如：我的 OpenAI / 我的 Qwen">
+        </label>
+        <label class="tool-field">Base URL
+          <input id="providerBaseUrlInput" name="base_url" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
+        </label>
+        <label class="tool-field">API Key
+          <input name="api_key" type="password" autocomplete="off" placeholder="sk-...">
+        </label>
+        <div class="grid gap-4 md:grid-cols-2">
+          <label class="tool-field">聊天/分析模型
+            <select id="providerChatModelInput" name="default_chat_model"></select>
+          </label>
+          <label class="tool-field">ASR 模型
+            <select id="providerAsrModelInput" name="default_asr_model"></select>
+          </label>
+          <label class="tool-field">图片模型
+            <select id="providerImageModelInput" name="default_image_model"></select>
+          </label>
+          <label class="tool-field">视频生成模型
+            <select id="providerVideoModelInput" name="default_video_model"></select>
+          </label>
+        </div>
+        <div class="tool-hint">模型输入框支持下拉选择，也可以手填控制台里的新模型名。HappyHorse 已包含文生视频 t2v、参考生视频 r2v、视频编辑 video-edit；Qwen 默认使用百炼 OpenAI 兼容模式。</div>
+        <div class="capability-grid">
+          {% for cap, cap_label in capability_labels.items() %}
+            <label><input type="checkbox" name="capabilities" value="{{ cap }}" checked> {{ cap_label }}</label>
+          {% endfor %}
+        </div>
+        <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">保存配置</button>
+      </form>
+    </article>
+
+    <aside class="soft-card tool-card p-6">
+      <div class="tool-card-head">
+        <span class="tool-icon"><i data-lucide="activity"></i></span>
+        <div>
+          <h2>已保存配置</h2>
+          <p>可随时心跳检测，不通也不会阻塞本地兜底流程</p>
+        </div>
+      </div>
+      <div class="mt-6 space-y-4">
+        {% for row in credential_rows %}
+          {% set item = row.item %}
+          <div class="provider-config-card" data-credential-id="{{ item.id }}">
+            <div class="provider-config-head">
+              <div>
+                <strong>{{ item.label }}</strong>
+                <span>{{ item.base_url }}</span>
+              </div>
+              <em class="{% if item.last_status == 'ok' %}is-ready{% endif %}">{{ item.last_status }}</em>
+            </div>
+            <div class="provider-config-meta">
+              <span>Key：{{ row.api_key_mask or "未填写" }}</span>
+              <span>Chat：{{ item.default_chat_model or "-" }}</span>
+              <span>ASR：{{ item.default_asr_model or "-" }}</span>
+              <span>Image：{{ item.default_image_model or "-" }}</span>
+              <span>Video：{{ item.default_video_model or "-" }}</span>
+            </div>
+            <div class="provider-config-actions">
+              <button class="muted-button rounded-xl px-4 py-2 text-xs font-black heartbeat-button" type="button" data-capability="chat">检测分析</button>
+              <button class="muted-button rounded-xl px-4 py-2 text-xs font-black heartbeat-button" type="button" data-capability="asr">检测 ASR</button>
+              <button class="muted-button rounded-xl px-4 py-2 text-xs font-black heartbeat-button" type="button" data-capability="image">检测图片</button>
+              <button class="muted-button rounded-xl px-4 py-2 text-xs font-black heartbeat-button" type="button" data-capability="video">检测视频</button>
+              <form action="/account/ai-providers/{{ item.id }}/delete" method="post">
+                <button class="muted-danger rounded-xl px-4 py-2 text-xs font-black" type="submit">删除</button>
+              </form>
+            </div>
+            <p class="provider-health-message">{{ item.last_message or "尚未检测" }}</p>
+          </div>
+        {% else %}
+          <div class="tool-hint">还没有用户级 Provider。你可以先使用服务器环境变量配置，或者新增自己的 API Key。</div>
+        {% endfor %}
+      </div>
+    </aside>
+  </div>
+</section>
+
+<script>
+const presetSelect = document.getElementById('providerPresetSelect');
+const modelInputs = {
+  chat: document.getElementById('providerChatModelInput'),
+  asr: document.getElementById('providerAsrModelInput'),
+  image: document.getElementById('providerImageModelInput'),
+  video: document.getElementById('providerVideoModelInput'),
+};
+const fillModelSelect = (kind, values, currentValue) => {
+  const select = modelInputs[kind];
+  if (!select) return;
+  select.textContent = '';
+  const rows = (values || []).filter(Boolean);
+  if (!rows.length) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '该能力暂无默认模型';
+    select.appendChild(empty);
+    return;
+  }
+  rows.forEach((value) => {
+    const item = document.createElement('option');
+    item.value = value;
+    item.textContent = value;
+    select.appendChild(item);
+  });
+  select.value = currentValue && rows.includes(currentValue) ? currentValue : rows[0];
+};
+const fillPreset = () => {
+  const option = presetSelect?.selectedOptions?.[0];
+  if (!option) return;
+  document.getElementById('providerLabelInput').value = option.dataset.label || '';
+  document.getElementById('providerBaseUrlInput').value = option.dataset.baseUrl || '';
+  const options = JSON.parse(option.dataset.modelOptions || '{}');
+  fillModelSelect('chat', options.chat, option.dataset.chatModel || '');
+  fillModelSelect('asr', options.asr, option.dataset.asrModel || '');
+  fillModelSelect('image', options.image, option.dataset.imageModel || '');
+  fillModelSelect('video', options.video, option.dataset.videoModel || '');
+};
+presetSelect?.addEventListener('change', fillPreset);
+fillPreset();
+
+document.querySelectorAll('.heartbeat-button').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const card = button.closest('.provider-config-card');
+    const message = card?.querySelector('.provider-health-message');
+    if (!card || !message) return;
+    button.disabled = true;
+    message.textContent = '正在检测...';
+    try {
+      const response = await fetch('/api/ai-providers/heartbeat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-Requested-With': 'fetch'},
+        body: JSON.stringify({
+          credential_id: card.dataset.credentialId,
+          capability: button.dataset.capability,
+        }),
+      });
+      const data = await response.json();
+      message.textContent = data.message || (data.ok ? '检测通过' : '检测失败');
+      card.querySelector('em').textContent = data.ok ? 'ok' : 'failed';
+      card.querySelector('em').classList.toggle('is-ready', Boolean(data.ok));
+    } catch (error) {
+      message.textContent = '检测请求失败';
+    } finally {
+      button.disabled = false;
+    }
+  });
+});
+</script>
+{% endblock %}

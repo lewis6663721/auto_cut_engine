@@ -1,5 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
+{% set is_tool_task = (task.ai_context or {}).get("tool_key") %}
+{% set tool_extra = (task.ai_context or {}).get("tool_result_extra", {}) %}
+{% set asr_label = tool_extra.get("asr_source_label") %}
+{% if not asr_label and (task.ai_context or {}).get("tool_key") == "video_transcription" %}
+  {% set asr_model = tool_extra.get("model") or (task.ai_context or {}).get("model") or "" %}
+  {% if tool_extra.get("fallback_used") %}
+    {% set asr_label = "本地兜底字幕" %}
+  {% elif asr_model.startswith("fun-asr") %}
+    {% set asr_label = "Fun-ASR 大模型" %}
+  {% elif asr_model.startswith("qwen3-asr") %}
+    {% set asr_label = "Qwen3-ASR 大模型" %}
+  {% else %}
+    {% set asr_label = "远程大模型" %}
+  {% endif %}
+{% endif %}
 <section class="mx-auto max-w-7xl">
   <a href="/tasks" class="text-lg font-semibold text-slate-600 transition hover:text-slate-300">← 返回任务中心</a>
   <div class="mt-6 flex items-center gap-4">
@@ -8,6 +23,15 @@
       {% if task.status == "success" %}✅ 已完成{% elif task.status == "failed" %}❌ 失败{% elif task.status == "processing" %}🔄 渲染中{% else %}⌛ 排队中{% endif %}
     </span>
   </div>
+
+  <div class="mt-4 inline-flex rounded-full bg-cyan-950/40 px-4 py-2 text-sm font-black text-cyan-300">
+    {{ task.template.name if task.template else (task.ai_context.get("tool_name") if task.ai_context else "工具任务") }}
+  </div>
+  {% if asr_label %}
+    <div class="mt-3 inline-flex rounded-full {% if tool_extra.get("fallback_used") %}bg-amber-950/50 text-amber-300{% else %}bg-emerald-950/45 text-emerald-300{% endif %} px-4 py-2 text-sm font-black">
+      {{ "本地兜底" if tool_extra.get("fallback_used") else "大模型转写" }} · {{ asr_label }}
+    </div>
+  {% endif %}
 
   <div class="soft-card mt-9 grid gap-8 px-8 py-7 md:grid-cols-4">
     <div>
@@ -30,9 +54,32 @@
   </div>
 
   <section id="preview" class="soft-card mt-8 p-7">
-    <h2 class="mb-5 text-2xl font-black text-slate-200">🎬 成品预览</h2>
-    {% if task.result_url %}
-      <video controls src="{{ task.result_url }}" class="aspect-video w-full rounded-lg bg-black"></video>
+    <h2 class="mb-5 text-2xl font-black text-slate-200">结果预览</h2>
+    {% if task.result_url and (task.ai_context or {}).get("tool_result_kind") == "subtitle" %}
+      <pre data-result-preview="true" class="max-h-[420px] overflow-auto rounded-lg bg-slate-950 p-5 text-sm leading-7 text-slate-300 whitespace-pre-wrap">{{ result_preview or task.result_url }}</pre>
+      {% if asr_label %}
+        <div class="mt-4 grid gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm font-bold text-slate-400 md:grid-cols-3">
+          <div><span class="text-slate-600">转写来源</span><div class="mt-1 text-cyan-300">{{ asr_label }}</div></div>
+          <div><span class="text-slate-600">模型</span><div class="mt-1 text-slate-300">{{ tool_extra.get("model") or (task.ai_context or {}).get("model") or "-" }}</div></div>
+          <div><span class="text-slate-600">时间戳</span><div class="mt-1 text-slate-300">{{ tool_extra.get("timestamp_mode") or "-" }}</div></div>
+        </div>
+      {% endif %}
+      <div class="mt-4 flex gap-4 text-lg font-black">
+        <a class="text-cyan-300" href="{{ task.result_url }}" download>⬇ 下载字幕</a>
+        {% if task.ai_context.get("tool_result_extra", {}).get("subtitle_txt") %}<a class="text-slate-600" href="{{ task.ai_context.get("tool_result_extra", {}).get("subtitle_txt") }}" download>下载 txt</a>{% endif %}
+      </div>
+    {% elif task.result_url and (task.ai_context or {}).get("tool_result_kind") == "image" %}
+      <img data-result-preview="true" src="{{ task.result_url }}" alt="生成图片" class="w-full rounded-lg bg-black object-contain">
+      <div class="mt-4 flex gap-4 text-lg font-black">
+        <a class="text-cyan-300" href="{{ task.result_url }}" download>⬇ 下载图片</a>
+      </div>
+    {% elif task.result_url and (task.ai_context or {}).get("tool_result_kind") == "audio" %}
+      <audio data-result-preview="true" controls src="{{ task.result_url }}" class="w-full"></audio>
+      <div class="mt-4 flex gap-4 text-lg font-black">
+        <a class="text-cyan-300" href="{{ task.result_url }}" download>⬇ 下载音频</a>
+      </div>
+    {% elif task.result_url %}
+      <video data-result-preview="true" controls src="{{ task.result_url }}" class="aspect-video w-full rounded-lg bg-black"></video>
       <div class="mt-4 flex gap-4 text-lg font-black">
         <a class="text-cyan-300" href="{{ task.result_url }}" download>⬇ 下载成品</a>
         <span class="text-slate-700">·</span>
@@ -43,57 +90,93 @@
         渲染完成后显示成品预览
       </div>
     {% endif %}
-    <div class="mt-5 h-2 rounded-full bg-slate-900"><div id="bar" class="h-2 rounded-full bg-cyan-400" style="width: {{ task.progress }}%"></div></div>
+    <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div class="text-sm font-black text-slate-500">当前进度</div>
+        <div class="mt-1 text-xl font-black text-cyan-300" id="previewProgressText">{{ task.progress }}%</div>
+      </div>
+      <div class="max-w-2xl text-right text-sm font-black text-slate-500" id="previewStageText">
+        {{ (task.ai_context or {}).get("progress_stage", "等待调度") }}
+      </div>
+    </div>
+    <div class="mt-3 h-2 rounded-full bg-slate-900"><div id="bar" class="h-2 rounded-full bg-cyan-400 transition-all" style="width: {{ task.progress }}%"></div></div>
     {% if task.error_log %}<pre class="mt-5 whitespace-pre-wrap rounded-lg bg-red-950/30 p-4 text-sm text-red-200">{{ task.error_log }}</pre>{% endif %}
   </section>
 
-  <section class="soft-card mt-8 overflow-hidden">
-    <h2 class="px-7 py-6 text-2xl font-black text-slate-200">✂️ 剪辑详情 ({{ details|length }})</h2>
-    <div class="overflow-auto">
-      <table class="w-full min-w-[980px] text-left text-base">
-        <thead class="border-y border-slate-800 text-sm font-black text-slate-700">
-          <tr><th class="p-5">#</th><th class="p-5">原视频时间点</th><th class="p-5">剪辑类型</th><th class="p-5">影响</th><th class="p-5">剪辑详情</th><th class="p-5">剪辑原因</th><th class="p-5">来源</th></tr>
-        </thead>
-        <tbody class="divide-y divide-slate-900">
-          {% for item in details %}
-            <tr>
-              <td class="p-5 text-slate-600">{{ loop.index }}</td>
-              <td class="p-5 font-mono font-black text-cyan-300">{{ "%.2f"|format(item.start_time) }} → <span class="text-slate-500">{{ "%.2f"|format(item.end_time) }}</span></td>
-              <td class="p-5"><span class="rounded-full bg-cyan-950/50 px-4 py-1 font-black text-cyan-300">{{ item.edit_type }}</span></td>
-              <td class="p-5 text-slate-400">{{ "🎬" if item.affects == "video" else "🔊" if item.affects == "audio" else "🎬🔊" }}</td>
-              <td class="p-5 font-semibold text-slate-400">{{ item.edit_detail }}</td>
-              <td class="p-5 font-semibold text-slate-500">{{ item.edit_reason }}</td>
-              <td class="p-5"><span class="rounded-md bg-slate-900 px-3 py-1 font-bold text-slate-500">{{ item.source }}</span></td>
-            </tr>
-          {% else %}
-            <tr><td colspan="7" class="p-8 text-center text-slate-600">渲染完成后生成剪辑详情</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
+  {% if not is_tool_task %}
+  {% if not is_tool_task %}
+    <section class="soft-card mt-8 overflow-hidden">
+      <h2 class="px-7 py-6 text-2xl font-black text-slate-200">✂️ 剪辑详情 ({{ details|length }})</h2>
+      <div class="overflow-auto">
+        <table class="w-full min-w-[980px] text-left text-base">
+          <thead class="border-y border-slate-800 text-sm font-black text-slate-700">
+            <tr><th class="p-5">#</th><th class="p-5">原视频时间点</th><th class="p-5">剪辑类型</th><th class="p-5">影响</th><th class="p-5">剪辑详情</th><th class="p-5">剪辑原因</th><th class="p-5">来源</th></tr>
+          </thead>
+          <tbody class="divide-y divide-slate-900">
+            {% for item in details %}
+              <tr>
+                <td class="p-5 text-slate-600">{{ loop.index }}</td>
+                <td class="p-5 font-mono font-black text-cyan-300">{{ "%.2f"|format(item.start_time) }} → <span class="text-slate-500">{{ "%.2f"|format(item.end_time) }}</span></td>
+                <td class="p-5"><span class="rounded-full bg-cyan-950/50 px-4 py-1 font-black text-cyan-300">{{ item.edit_type }}</span></td>
+                <td class="p-5 text-slate-400">{{ "🎬" if item.affects == "video" else "🔊" if item.affects == "audio" else "🎬🔊" }}</td>
+                <td class="p-5 font-semibold text-slate-400">{{ item.edit_detail }}</td>
+                <td class="p-5 font-semibold text-slate-500">{{ item.edit_reason }}</td>
+                <td class="p-5"><span class="rounded-md bg-slate-900 px-3 py-1 font-bold text-slate-500">{{ item.source }}</span></td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="p-8 text-center text-slate-600">渲染完成后生成剪辑详情</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+  {% endif %}
 
   <details class="soft-card mt-8 p-6 text-lg font-bold text-slate-500">
-    <summary class="cursor-pointer">▶ 🔧 查看完整配置 JSON</summary>
-    <pre class="mt-5 overflow-auto rounded-lg bg-slate-950 p-5 text-sm font-normal text-slate-400">{{ task.applied_config }}</pre>
+    <summary class="cursor-pointer">▶ 🔧 查看请求参数预览</summary>
+    <pre class="mt-5 max-h-[420px] overflow-auto rounded-lg bg-slate-950 p-5 text-sm font-normal text-slate-400">{{ request_preview }}</pre>
+  </details>
+  <details class="soft-card mt-4 p-6 text-lg font-bold text-slate-500">
+    <summary class="cursor-pointer">▶ 🔧 查看安全配置摘要 JSON</summary>
+    <pre class="mt-5 max-h-[420px] overflow-auto rounded-lg bg-slate-950 p-5 text-sm font-normal text-slate-400">{{ applied_config_preview }}</pre>
   </details>
 </section>
 <script>
+let unchangedPollCount = 0;
+let lastProgressSnapshot = {{ (task.status ~ ":" ~ task.progress ~ ":" ~ ((task.ai_context or {}).get("progress_stage", "等待调度")))|tojson }};
+
 async function poll(){
+  if (document.hidden) {
+    setTimeout(poll, 5000);
+    return;
+  }
   const res = await fetch('/api/task/{{ task.id }}/progress');
   if(!res.ok) return;
   const data = await res.json();
+  const snapshot = `${data.status}:${data.progress}:${data.stage || ''}`;
+  unchangedPollCount = snapshot === lastProgressSnapshot ? unchangedPollCount + 1 : 0;
+  lastProgressSnapshot = snapshot;
   document.getElementById('bar').style.width = data.progress + '%';
   document.getElementById('progressText').textContent = data.progress + '%';
   document.getElementById('stageText').textContent = data.stage || '';
+  const previewProgressText = document.getElementById('previewProgressText');
+  const previewStageText = document.getElementById('previewStageText');
+  if (previewProgressText) previewProgressText.textContent = data.progress + '%';
+  if (previewStageText) previewStageText.textContent = data.stage || '';
   const badge = document.getElementById('statusBadge');
   const labels = {pending: '⌛ 排队中', processing: '🔄 渲染中', success: '✅ 已完成', failed: '❌ 失败'};
   badge.className = `rounded-full px-4 py-1 text-lg font-black status-${data.status}`;
   badge.textContent = labels[data.status] || data.status;
   if(data.status === 'pending' || data.status === 'processing') {
-    setTimeout(poll, 1500);
-  } else if (data.status === 'success' && !document.querySelector('#preview video')) {
-    window.location.reload();
+    const delay = unchangedPollCount > 12 ? 6000 : unchangedPollCount > 5 ? 3000 : 1500;
+    setTimeout(poll, delay);
+  } else if (data.status === 'success' && !document.querySelector('#preview [data-result-preview]')) {
+    const reloadKey = 'task-detail-reloaded-{{ task.id }}';
+    if (!window.sessionStorage.getItem(reloadKey)) {
+      window.sessionStorage.setItem(reloadKey, '1');
+      window.location.reload();
+    }
   }
 }
 poll();

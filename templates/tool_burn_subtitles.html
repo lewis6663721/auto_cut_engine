@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/toolkit" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回剪辑工具包</a>
+      <h1 class="page-title mt-3 font-black text-white">字幕烧录</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">上传视频和 .srt / .ass 后，先导入为可编辑字幕稿，审核预览并微调后再生成带字幕视频。</p>
+    </div>
+    <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+  </div>
+
+  <form class="tool-workbench" action="/toolkit/burn-subtitles" method="post" enctype="multipart/form-data">
+    <section class="tool-config-panel">
+      <div class="tool-section">
+        <h2>素材</h2>
+        <label class="tool-field">视频文件
+          <input id="burnVideoInput" name="video" type="file" accept="video/*" required>
+        </label>
+        <label class="tool-field">字幕文件
+          <input id="burnSrtInput" name="subtitle_file" type="file" accept=".srt,.ass,.ssa,.vtt,text/plain">
+        </label>
+        <label class="tool-field">审核字幕稿
+          <textarea id="burnSubtitleText" name="subtitles" rows="9" placeholder="可以粘贴 SRT；上传 .srt/.ass 后会导入到这里，最终烧录以这里的审核稿为准"></textarea>
+        </label>
+        <div class="subtitle-audit-row">
+          <label class="subtitle-audit-check">
+            <input id="subtitleReviewConfirmed" name="review_confirmed" type="checkbox" value="1">
+            <span>已审核字幕内容、时间轴和样式，按当前预览效果烧录</span>
+          </label>
+          <div id="subtitleAuditState" class="subtitle-audit-state">等待导入字幕</div>
+        </div>
+      </div>
+
+      <div class="tool-section">
+        <h2>样式</h2>
+        <div class="grid gap-4 md:grid-cols-2">
+          <label class="tool-field">字体
+            <select id="subtitleFont" name="font_name">
+              <optgroup label="阿里巴巴普惠体">
+                <option value="Alibaba PuHuiTi 2 55 Regular">阿里巴巴普惠体 Regular</option>
+                <option value="Alibaba PuHuiTi 2 65 Medium">阿里巴巴普惠体 Medium</option>
+                <option value="Alibaba PuHuiTi 2 75 SemiBold">阿里巴巴普惠体 SemiBold</option>
+                <option value="Alibaba PuHuiTi 2 85 Bold">阿里巴巴普惠体 Bold</option>
+                <option value="Alibaba PuHuiTi 2 95 ExtraBold">阿里巴巴普惠体 ExtraBold</option>
+                <option value="Alibaba PuHuiTi 2 105 Heavy">阿里巴巴普惠体 Heavy</option>
+                <option value="Alibaba PuHuiTi 2 115 Black">阿里巴巴普惠体 Black</option>
+                <option value="Alibaba PuHuiTi 2 45 Light">阿里巴巴普惠体 Light</option>
+                <option value="Alibaba PuHuiTi 2 35 Thin">阿里巴巴普惠体 Thin</option>
+              </optgroup>
+              <optgroup label="系统字体">
+              <option value="PingFang SC">苹方</option>
+              <option value="Microsoft YaHei">微软雅黑</option>
+              <option value="Arial">Arial</option>
+              <option value="Noto Sans CJK SC">Noto Sans</option>
+              <option value="Source Han Sans SC">思源黑体</option>
+              </optgroup>
+            </select>
+          </label>
+          <label class="tool-field">对齐
+            <select id="subtitleAlign" name="alignment">
+              <option value="bottom-center">底部居中</option>
+              <option value="bottom-left">底部居左</option>
+              <option value="bottom-right">底部居右</option>
+              <option value="top-center">顶部居中</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <label class="tool-field">字体颜色
+            <input id="subtitleColor" name="font_color" type="color" value="#ffffff">
+          </label>
+          <label class="tool-field">背景
+            <select id="subtitleBackground" name="background">
+              <option value="none">无背景</option>
+              <option value="soft">半透明底</option>
+              <option value="solid">深色底</option>
+            </select>
+          </label>
+        </div>
+
+        {% for id, name, field, value, min, max, step in [
+          ("subtitleFontSize", "字体大小", "font_size", 42, 16, 96, 1),
+          ("subtitleSafeX", "水平安全距离 (%)", "safe_x_percent", 10, 0, 30, 1),
+          ("subtitleBottom", "底部距离 (px)", "bottom_margin", 96, 0, 360, 4),
+          ("subtitleStroke", "描边粗细", "outline", 3, 0, 10, 1),
+          ("subtitleShadow", "阴影强度", "shadow", 1, 0, 8, 1),
+          ("subtitleLineHeight", "行距倍率", "line_height", 1.15, 0.9, 1.8, 0.05)
+        ] %}
+          <label class="tool-stepper">
+            <span>{{ name }}</span>
+            <button type="button" data-step-target="{{ id }}" data-step="-{{ step }}">-</button>
+            <input id="{{ id }}" name="{{ field }}" type="number" value="{{ value }}" min="{{ min }}" max="{{ max }}" step="{{ step }}">
+            <button type="button" data-step-target="{{ id }}" data-step="{{ step }}">+</button>
+          </label>
+        {% endfor %}
+      </div>
+
+      <button id="burnSubmitButton" class="gradient-action rounded-xl px-5 py-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-45" type="submit" disabled>开始烧录</button>
+    </section>
+
+    <section class="subtitle-preview-panel">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-black text-slate-100">预览审核</h2>
+          <p id="subtitleCueInfo" class="mt-1 text-sm font-bold text-slate-600">暂无字幕段</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="subtitlePrevCue" type="button" class="muted-button rounded-lg px-3 py-2 text-xs font-black">上一条</button>
+          <button id="subtitleNextCue" type="button" class="muted-button rounded-lg px-3 py-2 text-xs font-black">下一条</button>
+        </div>
+      </div>
+      <div class="subtitle-preview-stage">
+        <canvas id="subtitlePreviewCanvas"></canvas>
+        <div id="subtitlePreviewText" class="subtitle-preview-text">请选择视频和字幕</div>
+      </div>
+      <div class="tool-hint mt-4">选择视频后会自动截取一帧作为底图；修改字幕稿或样式会实时更新预览。最终烧录只使用左侧审核字幕稿。</div>
+      <video id="subtitleFrameVideo" muted playsinline hidden></video>
+    </section>
+  </form>
+</section>
+
+<script>
+(() => {
+  const videoInput = document.getElementById('burnVideoInput');
+  const srtInput = document.getElementById('burnSrtInput');
+  const subtitleText = document.getElementById('burnSubtitleText');
+  const preview = document.getElementById('subtitlePreviewText');
+  const canvas = document.getElementById('subtitlePreviewCanvas');
+  const frameVideo = document.getElementById('subtitleFrameVideo');
+  const reviewConfirmed = document.getElementById('subtitleReviewConfirmed');
+  const auditState = document.getElementById('subtitleAuditState');
+  const submitButton = document.getElementById('burnSubmitButton');
+  const cueInfo = document.getElementById('subtitleCueInfo');
+  const prevCue = document.getElementById('subtitlePrevCue');
+  const nextCue = document.getElementById('subtitleNextCue');
+  const ctx = canvas.getContext('2d');
+  const controls = ['subtitleFont', 'subtitleAlign', 'subtitleColor', 'subtitleBackground', 'subtitleFontSize', 'subtitleSafeX', 'subtitleBottom', 'subtitleStroke', 'subtitleShadow', 'subtitleLineHeight'];
+  let previewCueIndex = 0;
+
+  function parseSubtitleCues() {
+    const text = subtitleText.value.trim();
+    if (!text) return [];
+    if (/\[Events\][\s\S]*Dialogue:/i.test(text)) return parseAssCues(text);
+    const lines = text.split(/\r?\n/);
+    const cues = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const match = lines[i].match(/(\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{1,3})/);
+      if (!match) continue;
+      const textLines = [];
+      i += 1;
+      while (i < lines.length && lines[i].trim()) {
+        textLines.push(lines[i].trim());
+        i += 1;
+      }
+      cues.push({ start: timeToSeconds(match[1]), end: timeToSeconds(match[2]), text: textLines.join('\n').trim() });
+    }
+    if (cues.length) return cues.filter(cue => cue.text);
+    return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map((line, index) => ({
+      start: index * 2,
+      end: index * 2 + 2,
+      text: line
+    }));
+  }
+
+  function parseAssCues(text) {
+    const lines = text.split(/\r?\n/);
+    let inEvents = false;
+    let fields = [];
+    const cues = [];
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      const lower = line.toLowerCase();
+      if (lower === '[events]') {
+        inEvents = true;
+        continue;
+      }
+      if (line.startsWith('[') && line.endsWith(']') && lower !== '[events]') inEvents = false;
+      if (!inEvents) continue;
+      if (lower.startsWith('format:')) {
+        fields = line.split(':').slice(1).join(':').split(',').map(item => item.trim().toLowerCase());
+        continue;
+      }
+      if (!lower.startsWith('dialogue:')) continue;
+      if (!fields.length) fields = ['layer', 'start', 'end', 'style', 'name', 'marginl', 'marginr', 'marginv', 'effect', 'text'];
+      const payload = line.split(':').slice(1).join(':').trim();
+      const parts = payload.split(/,(?=(?:[^{}]*\{[^}]*\})*[^}]*$)/);
+      const fixed = parts.length >= fields.length ? [...parts.slice(0, fields.length - 1), parts.slice(fields.length - 1).join(',')] : parts;
+      const row = Object.fromEntries(fields.map((field, index) => [field, (fixed[index] || '').trim()]));
+      const cueText = stripAssTags(row.text || '');
+      if (cueText) cues.push({ start: assTimeToSeconds(row.start || '0:00:00.00'), end: assTimeToSeconds(row.end || '0:00:00.50'), text: cueText });
+    }
+    return cues;
+  }
+
+  function cuesToSrt(cues) {
+    return cues.map((cue, index) => `${index + 1}\n${secondsToSrtTime(cue.start)} --> ${secondsToSrtTime(Math.max(cue.start + 0.3, cue.end))}\n${cue.text}`).join('\n\n');
+  }
+
+  function stripAssTags(text) {
+    return text.replace(/\\N/g, '\n').replace(/\\n/g, '\n').replace(/\{[^}]*\}/g, '').replace(/\\h/g, ' ').trim();
+  }
+
+  function assTimeToSeconds(value) {
+    const match = String(value || '').match(/(\d+):(\d{2}):(\d{2})(?:\.(\d{1,2}))?/);
+    if (!match) return 0;
+    return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(match[4] || 0) / 100;
+  }
+
+  function timeToSeconds(value) {
+    const normalized = String(value || '').replace(',', '.').split(':').map(Number);
+    if (normalized.length === 3) return normalized[0] * 3600 + normalized[1] * 60 + normalized[2];
+    if (normalized.length === 2) return normalized[0] * 60 + normalized[1];
+    return 0;
+  }
+
+  function secondsToSrtTime(seconds) {
+    const totalMs = Math.max(0, Math.round(Number(seconds || 0) * 1000));
+    const hours = Math.floor(totalMs / 3600000);
+    const minutes = Math.floor((totalMs % 3600000) / 60000);
+    const secs = Math.floor((totalMs % 60000) / 1000);
+    const ms = totalMs % 1000;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+  }
+
+  function currentSubtitleLine(cues) {
+    if (!cues.length) return subtitleText.value.trim() ? '字幕预览效果' : '请选择视频和字幕';
+    previewCueIndex = Math.max(0, Math.min(cues.length - 1, previewCueIndex));
+    return cues[previewCueIndex].text || '字幕预览效果';
+  }
+
+  function drawFrame() {
+    const width = frameVideo.videoWidth || 1080;
+    const height = frameVideo.videoHeight || 1920;
+    canvas.width = width;
+    canvas.height = height;
+    ctx.fillStyle = '#05060b';
+    ctx.fillRect(0, 0, width, height);
+    if (frameVideo.videoWidth) ctx.drawImage(frameVideo, 0, 0, width, height);
+    updatePreview();
+  }
+
+  function markNeedsReview(reason = '已修改，请重新审核确认') {
+    reviewConfirmed.checked = false;
+    auditState.textContent = reason;
+    auditState.classList.remove('is-confirmed');
+    updateSubmitState();
+  }
+
+  function updateSubmitState() {
+    const hasVideo = Boolean(videoInput.files?.[0]);
+    const hasSubtitles = Boolean(subtitleText.value.trim());
+    submitButton.disabled = !(hasVideo && hasSubtitles && reviewConfirmed.checked);
+  }
+
+  function updatePreview() {
+    const cues = parseSubtitleCues();
+    const font = document.getElementById('subtitleFont').value;
+    const align = document.getElementById('subtitleAlign').value;
+    const color = document.getElementById('subtitleColor').value;
+    const bg = document.getElementById('subtitleBackground').value;
+    const size = Number(document.getElementById('subtitleFontSize').value || 42);
+    const safeX = Number(document.getElementById('subtitleSafeX').value || 0);
+    const bottom = Number(document.getElementById('subtitleBottom').value || 0);
+    const outline = Number(document.getElementById('subtitleStroke').value || 0);
+    const shadow = Number(document.getElementById('subtitleShadow').value || 0);
+    const lineHeight = Number(document.getElementById('subtitleLineHeight').value || 1.15);
+    preview.textContent = currentSubtitleLine(cues);
+    cueInfo.textContent = cues.length ? `共 ${cues.length} 条 · 当前第 ${previewCueIndex + 1} 条` : '暂无字幕段';
+    preview.style.fontFamily = `"${font}", system-ui, sans-serif`;
+    preview.style.fontSize = `${size}px`;
+    preview.style.color = color;
+    preview.style.lineHeight = String(lineHeight);
+    preview.style.left = `${safeX}%`;
+    preview.style.right = `${safeX}%`;
+    preview.style.bottom = align.startsWith('bottom') ? `${bottom}px` : 'auto';
+    preview.style.top = align.startsWith('top') ? `${bottom}px` : 'auto';
+    preview.style.textAlign = align.endsWith('left') ? 'left' : align.endsWith('right') ? 'right' : 'center';
+    preview.style.alignItems = align.endsWith('left') ? 'flex-start' : align.endsWith('right') ? 'flex-end' : 'center';
+    preview.style.textShadow = outline || shadow
+      ? `0 0 ${Math.max(1, outline * 1.5)}px #000, ${shadow}px ${shadow}px ${Math.max(1, shadow * 2)}px rgba(0,0,0,.9)`
+      : 'none';
+    preview.style.background = bg === 'none' ? 'transparent' : bg === 'soft' ? 'rgba(0,0,0,.36)' : 'rgba(0,0,0,.72)';
+    preview.style.padding = bg === 'none' ? '0' : '10px 16px';
+    updateSubmitState();
+  }
+
+  videoInput.addEventListener('change', () => {
+    const file = videoInput.files?.[0];
+    if (!file) return;
+    frameVideo.src = URL.createObjectURL(file);
+    markNeedsReview('视频已更新，请审核预览后确认');
+    frameVideo.onloadedmetadata = () => {
+      frameVideo.currentTime = Math.min(1, Math.max(0, frameVideo.duration * 0.12));
+    };
+    frameVideo.onseeked = drawFrame;
+  });
+
+  srtInput.addEventListener('change', async () => {
+    const file = srtInput.files?.[0];
+    if (!file) return;
+    const rawText = await file.text();
+    const isAss = /\.(ass|ssa)$/i.test(file.name);
+    subtitleText.value = isAss ? cuesToSrt(parseAssCues(rawText)) : rawText;
+    previewCueIndex = 0;
+    markNeedsReview(`已导入 ${file.name}，请审核字幕稿`);
+    updatePreview();
+  });
+
+  subtitleText.addEventListener('input', () => {
+    previewCueIndex = 0;
+    markNeedsReview('字幕稿已修改，请重新审核确认');
+    updatePreview();
+  });
+  controls.forEach(id => document.getElementById(id)?.addEventListener('input', () => {
+    markNeedsReview('样式已修改，请重新审核确认');
+    updatePreview();
+  }));
+  reviewConfirmed.addEventListener('change', () => {
+    auditState.textContent = reviewConfirmed.checked ? '已审核确认，可以烧录' : '请审核预览后勾选确认';
+    auditState.classList.toggle('is-confirmed', reviewConfirmed.checked);
+    updateSubmitState();
+  });
+  prevCue.addEventListener('click', () => {
+    previewCueIndex -= 1;
+    updatePreview();
+  });
+  nextCue.addEventListener('click', () => {
+    previewCueIndex += 1;
+    updatePreview();
+  });
+  document.querySelectorAll('[data-step-target]').forEach(button => {
+    button.addEventListener('click', () => {
+      const input = document.getElementById(button.dataset.stepTarget);
+      const step = Number(button.dataset.step || 1);
+      input.value = Math.max(Number(input.min || -Infinity), Math.min(Number(input.max || Infinity), Number(input.value || 0) + step));
+      input.dispatchEvent(new Event('input'));
+    });
+  });
+  drawFrame();
+  updateSubmitState();
+})();
+</script>
+{% endblock %}

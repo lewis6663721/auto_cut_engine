@@ -5,6 +5,7 @@
 - Linux server with Docker Engine and Docker Compose plugin
 - Ports `80` and `22` open
 - Recommended: 4 CPU / 8 GB RAM / 100 GB disk or higher for video rendering
+- Remotion 真渲染需要 Node.js / npm。Docker 镜像会自动安装并执行 `remotion_runtime/npm ci`；裸机运行时需手动执行 `cd remotion_runtime && npm install`。
 
 Install Docker on Ubuntu:
 
@@ -23,7 +24,20 @@ Edit `.env.production`:
 
 - Replace `MYSQL_ROOT_PASSWORD`
 - Replace `SECRET_KEY`
-- Fill `TRANSFER_API_KEY` if AI analysis should call the remote model
+- Fill `TRANSFER_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY`, or `SEDANCE_API_KEY` if AI features should call remote models.
+- Users can also configure provider keys from `/account`; server-side env keys are still useful as shared defaults.
+
+ASR fallback:
+
+- The project includes `faster-whisper` in `requirements.txt`.
+- The first local ASR run downloads the selected Whisper model weights, so keep enough disk space and allow outbound access to the model host.
+- If remote ASR and local ASR are both unavailable, the task still produces placeholder subtitles so the workflow does not break.
+
+Custom effect assets:
+
+- User-uploaded effect packages are stored under `media/effects`.
+- Remotion zip uploads require `manifest.json` and a valid `entry` such as `src/Root.tsx`.
+- Lottie JSON and LUT `.cube` files are stored and listed first; rendering adapters can be enabled incrementally.
 
 ## 3. Deploy From Local Machine
 

@@ -16,6 +16,10 @@
 
 业务 API 默认要求登录。未登录请求返回 `401 Login required`，避免前端 fetch 被重定向到 HTML 登录页后产生解析错误。
 
+## 登录有效期
+
+默认登录会话有效期为 6 小时，由 `ACCESS_TOKEN_EXPIRE_MINUTES=360` 控制。
+
 ## 角色
 
 | 角色 | 权限 |
@@ -31,4 +35,3 @@
 - 普通用户：`demo` / `demo123`
 
 生产环境上线后应立即修改默认密码，并更换 `.env.production` 中的 `SECRET_KEY`。
-

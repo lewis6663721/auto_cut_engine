@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+{% set demo_href = "/template/" ~ templates[0].id ~ "/demo" if templates else "/" %}
+<section class="home-page">
+  <div class="home-hero">
+    <div class="home-brand-block">
+      <img src="{{ site_logo_url or '/brand/logo.png' }}" alt="{{ site_name or '剪·AI' }} logo" class="home-logo">
+      <h1 class="home-title">{{ site_name or "剪·AI" }}</h1>
+      <p class="home-subtitle">把剪映式基础剪辑、AI 智能匹配和专家经验模板放进同一个自动化工作台。</p>
+      <div class="home-actions">
+        <a href="/editor" class="home-action-primary">进入剪辑台</a>
+        <a href="/templates" class="home-action-secondary">模板中心</a>
+        <a href="/toolkit" class="home-action-secondary">剪辑工具包</a>
+        <a href="/ai-tools" class="home-action-secondary">AI 工具包</a>
+        <a href="/ai-match" class="home-action-secondary">AI 智能匹配</a>
+      </div>
+    </div>
+
+    <div id="homeFeatureCloud" class="home-feature-cloud" aria-label="项目功能">
+      {% for href, icon, label in [
+        ("/editor", "scissors", "剪辑台"),
+        ("/templates", "layout-template", "模板中心"),
+        ("/toolkit", "package", "剪辑工具包"),
+        ("/ai-tools", "brain", "AI 工具包"),
+        ("/ai-match", "wand-sparkles", "AI 智能匹配"),
+        ("/creative", "sparkles", "创意坊"),
+        ("/tasks", "list-checks", "任务中心"),
+        ("/editor", "layers-3", "多轨剪辑"),
+        ("/editor", "music-2", "音效库"),
+        ("/editor", "subtitles", "字幕生成"),
+        ("/editor", "split-square-horizontal", "转场"),
+        ("/editor", "sliders-horizontal", "滤镜调色"),
+        (demo_href, "screen-share", "Demo 对比"),
+        ("/editor", "audio-waveform", "音频分离")
+      ] %}
+        <a href="{{ href }}" class="home-feature" style="--feature-index: {{ loop.index0 }}">
+          <i data-lucide="{{ icon }}"></i>
+          <span>{{ label }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<script>
+(() => {
+  const cloud = document.getElementById('homeFeatureCloud');
+  if (!cloud) return;
+  const items = Array.from(cloud.querySelectorAll('.home-feature'));
+  const safeRand = (min, max) => min + Math.random() * (max - min);
+  items.forEach((item, index) => {
+    const column = index % 4;
+    const row = Math.floor(index / 4);
+    const baseX = 14 + column * 24 + safeRand(-5, 5);
+    const baseY = 18 + row * 28 + safeRand(-6, 6);
+    const duration = safeRand(16, 30);
+    item.style.setProperty('--feature-x', `${Math.max(7, Math.min(93, baseX))}%`);
+    item.style.setProperty('--feature-y', `${Math.max(10, Math.min(88, baseY))}%`);
+    item.style.setProperty('--feature-scale', safeRand(.88, 1.12).toFixed(2));
+    item.style.setProperty('--feature-duration', `${duration.toFixed(1)}s`);
+    item.style.setProperty('--feature-delay', `${(-safeRand(0, duration)).toFixed(1)}s`);
+    item.style.setProperty('--feature-dx1', `${safeRand(-36, 36).toFixed(0)}px`);
+    item.style.setProperty('--feature-dy1', `${safeRand(-24, 24).toFixed(0)}px`);
+    item.style.setProperty('--feature-dx2', `${safeRand(-46, 46).toFixed(0)}px`);
+    item.style.setProperty('--feature-dy2', `${safeRand(-30, 30).toFixed(0)}px`);
+  });
+})();
+</script>
+{% endblock %}

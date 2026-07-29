@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/ai-tools" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回 AI 工具包</a>
+      <h1 class="page-title mt-3 font-black text-white">文生图</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">输入画面描述，系统只展示支持图片生成的 Provider 和图片模型。</p>
+    </div>
+    <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+  </div>
+
+  <form class="tool-workbench" action="/ai-tools/text-image" method="post">
+    <section class="tool-config-panel">
+      {% if providers %}
+        <div class="tool-section">
+          <h2>提示词</h2>
+          <label class="tool-field">画面描述
+            <textarea id="imagePromptInput" name="prompt" rows="7" placeholder="例如：赛博风格的英雄联盟峡谷，蓝紫霓虹光，电影级构图，细节丰富" required></textarea>
+          </label>
+          <label class="tool-field">反向提示词
+            <textarea name="negative_prompt" rows="3" placeholder="例如：低清晰度、畸形手指、多余肢体、文字水印"></textarea>
+          </label>
+        </div>
+
+        <div class="tool-section">
+          <h2>模型</h2>
+          <label class="tool-field">Provider
+            <select id="imageProviderSelect" name="provider">
+              {% for provider in providers %}
+                <option value="{{ provider.id }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.model }}" data-model-options='{{ provider.model_options | tojson }}' data-configured="{{ provider.configured }}">
+                  {{ provider.label }}{% if provider.source == "user" %} · 用户中心{% else %} · 环境变量{% endif %}{% if provider.configured == "true" %} · 已配置{% else %} · 未配置{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">Base URL
+              <input id="imageBaseUrlInput" name="base_url" value="{{ providers[0].base_url }}">
+            </label>
+            <label class="tool-field">图片模型
+              <select id="imageModelSelect" name="model"></select>
+            </label>
+          </div>
+          <div id="imageProviderHint" class="tool-hint">下拉框只包含支持图片生成的模型，例如 gpt-image-1、wan2.7-image。</div>
+        </div>
+
+        <div class="tool-section">
+          <h2>生成参数</h2>
+          <div class="grid gap-4 md:grid-cols-3">
+            <label class="tool-field">尺寸
+              <select name="size">
+                <option value="1024x1024">1:1 · 1024</option>
+                <option value="1328x1328">1:1 · 1328</option>
+                <option value="1664x1664">1:1 · 1664</option>
+                <option value="1024x1536">2:3 · 1024x1536</option>
+                <option value="1536x1024">3:2 · 1536x1024</option>
+                <option value="720x1280">9:16 · 720x1280</option>
+                <option value="1280x720">16:9 · 1280x720</option>
+              </select>
+            </label>
+            <label class="tool-field">生成张数
+              <input name="n" type="number" min="1" max="4" step="1" value="1">
+            </label>
+            <label class="tool-field">随机种子
+              <input name="seed" type="number" min="0" step="1" placeholder="留空为随机">
+            </label>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">风格
+              <select name="style">
+                <option value="">自动</option>
+                <option value="natural">自然</option>
+                <option value="vivid">鲜明</option>
+              </select>
+            </label>
+            <label class="tool-field">质量
+              <select name="quality">
+                <option value="">默认</option>
+                <option value="standard">标准</option>
+                <option value="hd">高清</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">智能改写
+              <select name="prompt_extend">
+                <option value="true">开启</option>
+                <option value="false">关闭</option>
+              </select>
+            </label>
+            <label class="tool-field inline-tool-check">
+              <input name="watermark" type="checkbox" value="true">
+              <span>添加模型水印</span>
+            </label>
+          </div>
+        </div>
+
+        <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">开始生成</button>
+      {% else %}
+        <div class="tool-empty-state">
+          <span class="tool-dock-icon"><i data-lucide="image"></i></span>
+          <strong>还没有可用的图片生成 Provider</strong>
+          <p>请先到用户中心配置支持图片生成的厂商，例如 ChatGPT / OpenAI、Qwen / 百炼或 AIFox。</p>
+          <a href="/account" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">去用户中心配置</a>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="subtitle-preview-panel">
+      <div class="ai-preview-card">
+        <span class="tool-dock-icon"><i data-lucide="image"></i></span>
+        <strong>生成后在任务详情页预览图片</strong>
+        <p id="imagePromptPreview">这里会同步显示你输入的画面描述，方便提交前复核。</p>
+      </div>
+      <div class="tool-hint mt-4">文生图属于纯 AI 能力；如果 Provider 没配置 API Key，任务会提示去用户中心补齐配置。</div>
+    </section>
+  </form>
+</section>
+
+<script>
+const fillSelectOptions = (select, values, currentValue) => {
+  if (!select) return;
+  select.textContent = '';
+  const rows = (values || []).filter(Boolean);
+  rows.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if (currentValue && rows.includes(currentValue)) {
+    select.value = currentValue;
+  } else if (rows.length) {
+    select.value = rows[0];
+  }
+};
+
+const imageProviderSelect = document.getElementById('imageProviderSelect');
+const imageBaseUrlInput = document.getElementById('imageBaseUrlInput');
+const imageModelSelect = document.getElementById('imageModelSelect');
+const imageProviderHint = document.getElementById('imageProviderHint');
+const syncImageProvider = () => {
+  const option = imageProviderSelect?.selectedOptions?.[0];
+  if (!option) return;
+  imageBaseUrlInput.value = option.dataset.baseUrl || '';
+  fillSelectOptions(imageModelSelect, JSON.parse(option.dataset.modelOptions || '[]'), option.dataset.model || '');
+  if (imageProviderHint) {
+    imageProviderHint.textContent = option.dataset.configured === 'true'
+      ? '当前 Provider 已配置，可提交文生图任务。'
+      : '当前 Provider 缺少 API Key，提交后会提示补齐配置。';
+  }
+};
+imageProviderSelect?.addEventListener('change', syncImageProvider);
+syncImageProvider();
+
+document.getElementById('imagePromptInput')?.addEventListener('input', (event) => {
+  const target = document.getElementById('imagePromptPreview');
+  if (target) target.textContent = event.target.value.trim() || '这里会同步显示你输入的画面描述，方便提交前复核。';
+});
+</script>
+{% endblock %}

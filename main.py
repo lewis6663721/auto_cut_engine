@@ -4,22 +4,41 @@ import json
 import re
 import shutil
 import subprocess
+import base64
+import hashlib
+import html
+import httpx
+import zipfile
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from auth import current_user, hash_password, login_response, logout_response, require_admin, require_user, safe_next_url, verify_password
 from config import BASE_DIR, ensure_media_dirs, settings
 from database import close_db, init_db
-from models import Asset, CreativeWork, EditDetail, RenderTask, Template, TimelineClip, TimelineProject, TimelineTrack, User
+from models import Asset, CreativeWork, EditDetail, RemotionTemplate, RenderTask, Template, TimelineClip, TimelineProject, TimelineTrack, User
+from models import AiProviderCredential
+from render_engine.ai_providers import (
+    CAPABILITY_LABELS,
+    PROVIDER_PRESETS,
+    check_provider_health,
+    join_api_url,
+    mask_secret,
+    persist_health_result,
+    resolve_provider_config,
+    seal_secret,
+    unseal_secret,
+    user_provider_catalog,
+)
 from render_engine.ai_analyzer import analyze_video_for_match
 from render_engine.creative_analyzer import analyze_creative_work
 from render_engine.dimension_registry import (
@@ -37,11 +56,52 @@ from render_engine.media_preview import (
     preview_url_for_asset,
     waveform_url_for_asset,
 )
+from render_engine.remotion_factory import generate_remotion_draft, reference_file_payload, remotion_asset_library, validate_remotion_code
+from render_engine.toolkit import (
+    ai_tools as toolkit_ai_tools,
+    chat_provider_catalog,
+    extract_chat_content_text,
+    image_provider_catalog,
+    raise_for_status_with_body,
+    tts_provider_catalog,
+    video_provider_catalog,
+    provider_defaults,
+    run_tool_task,
+    toolkit_tools,
+)
 from render_engine.timeline_renderer import render_timeline_project
 from seed_data import seed_sfx_assets, seed_templates, seed_users
 
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+SENSITIVE_REQUEST_KEYS = {
+    "api_key",
+    "api-key",
+    "apikey",
+    "api_key_secret",
+    "secret",
+    "token",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "password",
+    "credential",
+}
+LARGE_REQUEST_KEYS = {
+    "audio",
+    "image",
+    "video",
+    "file",
+    "files",
+    "data",
+    "base64",
+    "b64_json",
+    "image_base64",
+    "audio_data",
+    "video_data",
+}
 
 
 SUBTITLE_TIMECODE_RE = re.compile(
@@ -62,6 +122,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.mount("/brand", StaticFiles(directory=str(BASE_DIR / "asset")), name="brand")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.mount("/media", StaticFiles(directory=str(settings.media_path)), name="media")
 
@@ -69,6 +130,11 @@ app.mount("/media", StaticFiles(directory=str(settings.media_path)), name="media
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(BASE_DIR / "asset" / "logo.png", media_type="image/png")
 
 
 DEMO_BY_CATEGORY = {
@@ -95,6 +161,8 @@ async def view_context(request: Request, **extra: Any) -> dict[str, Any]:
         "request": request,
         "user": await current_user(request),
         "dimensions": await get_dimension_registry(),
+        "site_name": settings.app_name,
+        "site_logo_url": "/brand/logo.png",
         **extra,
     }
 
@@ -106,6 +174,70 @@ def render(_request: Request, template_name: str, **context: Any) -> HTMLRespons
 def auth_url(path: str, next_url: str, **params: str) -> str:
     query = {"next": safe_next_url(next_url), **params}
     return f"{path}?{urlencode(query)}"
+
+
+def clamp_int_value(value: Any, minimum: int, maximum: int, fallback: int) -> int:
+    try:
+        return int(max(minimum, min(maximum, int(float(value)))))
+    except Exception:
+        return fallback
+
+
+def clamp_number(value: Any, minimum: float, maximum: float, fallback: float) -> float:
+    try:
+        return float(max(minimum, min(maximum, float(value))))
+    except Exception:
+        return fallback
+
+
+def build_chat_completion_messages(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_messages = data.get("messages")
+    if not isinstance(raw_messages, list):
+        raise HTTPException(400, "缺少对话消息。")
+    system_prompt = str(data.get("system_prompt") or "").strip()
+    messages: list[dict[str, Any]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt[:4000]})
+    cleaned_history: list[dict[str, Any]] = []
+    for item in raw_messages[-20:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        if role not in {"user", "assistant"}:
+            continue
+        text = str(item.get("content") or "").strip()
+        if text:
+            cleaned_history.append({"role": role, "content": text[:8000]})
+    if not cleaned_history:
+        raise HTTPException(400, "请输入对话内容。")
+    image_urls = normalize_chat_image_urls(data)
+    if image_urls:
+        last_user_index = next((index for index in range(len(cleaned_history) - 1, -1, -1) if cleaned_history[index]["role"] == "user"), -1)
+        if last_user_index >= 0:
+            text = str(cleaned_history[last_user_index].get("content") or "")
+            content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+            content.extend({"type": "image_url", "image_url": {"url": image_url}} for image_url in image_urls)
+            cleaned_history[last_user_index] = {"role": "user", "content": content}
+    messages.extend(cleaned_history)
+    return messages
+
+
+def normalize_chat_image_urls(data: dict[str, Any]) -> list[str]:
+    rows: list[str] = []
+    raw_urls = data.get("image_urls")
+    if isinstance(raw_urls, list):
+        candidates = raw_urls
+    else:
+        candidates = [data.get("image_url")]
+    for value in candidates:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        if cleaned.startswith(("http://", "https://", "data:image/")) and len(cleaned) <= 8_000_000:
+            rows.append(cleaned)
+        if len(rows) >= 4:
+            break
+    return rows
 
 
 def demo_context_for_template(template: Template) -> dict[str, str]:
@@ -149,6 +281,7 @@ def classify_media(filename: str | None, content_type: str | None = None) -> str
 def asset_payload(asset: Asset) -> dict[str, Any]:
     preview_url = preview_url_for_asset(asset.id, asset.asset_type) or ensure_asset_preview(asset.id, asset.file_path, asset.asset_type)
     waveform_url = waveform_url_for_asset(asset.id) or ensure_asset_waveform(asset.id, asset.file_path, asset.asset_type)
+    duration = probe_duration(Path(asset.file_path)) if asset.asset_type in {"video", "audio", "sfx"} else 0.0
     return {
         "id": asset.id,
         "name": asset.name,
@@ -156,12 +289,13 @@ def asset_payload(asset: Asset) -> dict[str, Any]:
         "url": media_url_for_file(asset.file_path),
         "preview_url": preview_url,
         "waveform_url": waveform_url,
+        "duration": round(duration, 3) if duration > 0 else None,
         "tags": asset.tags or [],
     }
 
 
 async def project_editor_asset_payloads(project_id: int, limit: int = 120) -> list[dict[str, Any]]:
-    assets = await Asset.filter(asset_type__in=["video", "image", "audio"]).limit(max(limit, 300))
+    assets = await Asset.filter(asset_type__in=["video", "image", "audio"]).order_by("id").limit(max(limit, 300))
     if not assets:
         return []
     asset_ids = [asset.id for asset in assets]
@@ -183,7 +317,7 @@ async def project_editor_asset_payloads(project_id: int, limit: int = 120) -> li
         is_loose_editor_asset = "editor" in tags and not any(str(tag).startswith("project:") for tag in tags) and asset.id not in referenced_asset_ids
         if is_project_asset or is_loose_editor_asset:
             payload = asset_payload(asset)
-            payload["deletable"] = True
+            payload["deletable"] = asset.asset_type != "sfx"
             rows.append(payload)
         if len(rows) >= limit:
             break
@@ -438,6 +572,7 @@ def normalize_timeline_export_settings(
 async def serialize_project(project: TimelineProject) -> dict[str, Any]:
     tracks = await TimelineTrack.filter(project=project).prefetch_related("clips__asset")
     meta = dict(project.timeline_meta or {})
+    track_ui = meta.get("track_ui") if isinstance(meta.get("track_ui"), dict) else {}
     return {
         "id": project.id,
         "name": project.name,
@@ -452,6 +587,15 @@ async def serialize_project(project: TimelineProject) -> dict[str, Any]:
                 "sort_order": track.sort_order,
                 "muted": track.muted,
                 "locked": track.locked,
+                "ui_height": 28
+                if bool((track_ui.get(str(track.id)) or {}).get("collapsed"))
+                else int((track_ui.get(str(track.id)) or {}).get("height") or 46),
+                "ui_expanded_height": int(
+                    (track_ui.get(str(track.id)) or {}).get("expanded_height")
+                    or (track_ui.get(str(track.id)) or {}).get("height")
+                    or 46
+                ),
+                "ui_collapsed": bool((track_ui.get(str(track.id)) or {}).get("collapsed")),
                 "clips": [
                     {
                         "id": clip.id,
@@ -470,6 +614,270 @@ async def serialize_project(project: TimelineProject) -> dict[str, Any]:
             for track in tracks
         ],
     }
+
+
+REMOTION_EFFECT_RENDER_MAP: dict[str, dict[str, Any]] = {
+    "impact_shake": {
+        "filter_preset": "vivid",
+        "contrast": 1.2,
+        "saturation": 1.35,
+        "brightness": 0.04,
+        "blur": 0,
+        "sharpen": 0.75,
+        "motion_preset": "push_in",
+        "motion_intensity": 0.35,
+    },
+    "subtitle_pop": {
+        "filter_preset": "none",
+        "animation_in": "pop",
+        "animation_in_duration": 0.25,
+        "fade_in": 0.08,
+        "sharpen": 0.2,
+    },
+    "energy_sweep": {
+        "filter_preset": "cinematic",
+        "contrast": 1.12,
+        "saturation": 1.05,
+        "brightness": 0.03,
+        "blur": 0,
+        "sharpen": 0.25,
+    },
+    "particle_burst": {
+        "filter_preset": "vivid",
+        "contrast": 1.16,
+        "saturation": 1.28,
+        "brightness": 0.03,
+        "blur": 0,
+        "sharpen": 0.55,
+    },
+}
+
+
+REMOTION_TRANSITION_RENDER_MAP: dict[str, dict[str, Any]] = {
+    "flash_cut": {"transition": "fade", "transition_duration": 0.18},
+    "comic_panel_wipe": {"transition": "wipeleft", "transition_duration": 0.55},
+    "glitch_snap": {"transition": "fade", "transition_duration": 0.24},
+    "speed_line_push": {"transition": "slideleft", "transition_duration": 0.5},
+}
+
+
+def _library_items_by_key(group: str) -> dict[str, dict[str, Any]]:
+    library = remotion_asset_library()
+    return {str(item["key"]): item for item in library[group]}
+
+
+def _remotion_preset_key(group: str, template_id: int, key: str) -> str:
+    return f"remotion_{group}_{template_id}_{key}"
+
+
+def _remotion_editor_asset_payload(template: RemotionTemplate, group: str, key: str) -> dict[str, Any]:
+    library_group = "effects" if group == "effect" else "transitions"
+    library_item = _library_items_by_key(library_group).get(key, {})
+    render_map = REMOTION_EFFECT_RENDER_MAP if group == "effect" else REMOTION_TRANSITION_RENDER_MAP
+    mapped_params = dict(render_map.get(key, {}))
+    mapped_params.update(
+        {
+            "remotion_template_id": template.id,
+            "remotion_asset_group": group,
+            "remotion_asset_key": key,
+            "remotion_asset_name": library_item.get("name") or key,
+        }
+    )
+    return {
+        "preset_key": _remotion_preset_key(group, template.id, key),
+        "template_id": template.id,
+        "template_title": template.title,
+        "group": group,
+        "key": key,
+        "name": library_item.get("name") or key,
+        "description": library_item.get("description") or template.description,
+        "preview_url": f"/remotion-templates/{template.id}/preview",
+        "detail_url": f"/remotion-templates/{template.id}",
+        "params": mapped_params,
+    }
+
+
+async def remotion_editor_assets_for_user(user: User) -> dict[str, list[dict[str, Any]]]:
+    query = RemotionTemplate.all()
+    if not user.is_admin:
+        query = query.filter(user=user)
+    templates_rows = await query.limit(120)
+    assets: dict[str, list[dict[str, Any]]] = {"effects": [], "transitions": []}
+    for template in templates_rows:
+        editor_asset = (template.blueprint or {}).get("editor_asset")
+        if not isinstance(editor_asset, dict):
+            continue
+        groups = set(editor_asset.get("groups") or [])
+        if "effect" in groups:
+            for key in template.effect_keys or []:
+                assets["effects"].append(_remotion_editor_asset_payload(template, "effect", str(key)))
+        if "transition" in groups:
+            for key in template.transition_keys or []:
+                assets["transitions"].append(_remotion_editor_asset_payload(template, "transition", str(key)))
+    return assets
+
+
+CUSTOM_EFFECT_KIND_LABELS = {
+    "video_overlay": "视频叠加特效",
+    "transparent_video": "透明动效",
+    "image_sequence": "图片序列",
+    "lottie": "Lottie 动效",
+    "lut": "LUT 调色",
+    "sfx": "音效",
+}
+
+
+def _tag_value(tags: list[str], prefix: str, default: str = "") -> str:
+    marker = f"{prefix}:"
+    for tag in tags:
+        if str(tag).startswith(marker):
+            return str(tag)[len(marker) :]
+    return default
+
+
+def _custom_asset_payload(asset: Asset) -> dict[str, Any]:
+    tags = [str(tag) for tag in (asset.tags or [])]
+    payload = asset_payload(asset)
+    kind = _tag_value(tags, "effect_kind", "video_overlay")
+    group = _tag_value(tags, "library_group", "effect")
+    payload.update(
+        {
+            "preset_key": f"custom_asset_{asset.id}",
+            "kind": kind,
+            "kind_label": CUSTOM_EFFECT_KIND_LABELS.get(kind, kind),
+            "group": group,
+            "preferred_track_type": "sfx" if asset.asset_type in {"audio", "sfx"} else "overlay",
+            "description": _tag_value(tags, "description", CUSTOM_EFFECT_KIND_LABELS.get(kind, "自定义特效素材")),
+            "usable": asset.asset_type in {"video", "image", "audio", "sfx"},
+        }
+    )
+    return payload
+
+
+async def custom_editor_asset_payloads() -> dict[str, list[dict[str, Any]]]:
+    assets = [
+        asset
+        for asset in await Asset.all().order_by("-id").limit(400)
+        if "effect_library" in [str(tag) for tag in (asset.tags or [])]
+    ][:160]
+    grouped: dict[str, list[dict[str, Any]]] = {"effects": [], "transitions": [], "pending": []}
+    for asset in assets:
+        payload = _custom_asset_payload(asset)
+        group = payload["group"]
+        if not payload["usable"]:
+            grouped["pending"].append(payload)
+        elif group == "transition":
+            grouped["transitions"].append(payload)
+        else:
+            grouped["effects"].append(payload)
+    return grouped
+
+
+def _normalize_effect_upload_kind(value: str, filename: str) -> str:
+    suffix = Path(filename or "").suffix.lower()
+    allowed = {"video_overlay", "transparent_video", "image_sequence", "lottie", "lut", "sfx", "remotion_zip"}
+    if value in allowed:
+        return value
+    if suffix == ".json":
+        return "lottie"
+    if suffix == ".cube":
+        return "lut"
+    if suffix == ".zip":
+        return "image_sequence"
+    if suffix in {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg", ".weba"}:
+        return "sfx"
+    return "video_overlay"
+
+
+def _asset_type_for_effect_upload(kind: str, filename: str, content_type: str | None) -> str:
+    if kind == "sfx":
+        return "sfx"
+    if kind in {"lottie", "lut", "image_sequence"}:
+        return "file"
+    return classify_media(filename, content_type)
+
+
+def _safe_zip_member(name: str) -> bool:
+    path = Path(name)
+    return bool(name) and not path.is_absolute() and ".." not in path.parts
+
+
+def _read_remotion_zip_manifest(path: Path) -> tuple[dict[str, Any], str]:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            if any(not _safe_zip_member(name) for name in names):
+                raise HTTPException(400, "Remotion zip 包含不安全路径")
+            manifest_name = next((name for name in names if Path(name).name == "manifest.json"), "")
+            if not manifest_name:
+                raise HTTPException(400, "Remotion zip 缺少 manifest.json")
+            manifest = json.loads(archive.read(manifest_name).decode("utf-8"))
+            entry = str(manifest.get("entry") or "src/Root.tsx")
+            if not _safe_zip_member(entry) or entry not in names:
+                raise HTTPException(400, "Remotion zip 的 entry 文件不存在")
+            code = archive.read(entry).decode("utf-8", errors="replace")
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "Remotion zip 文件无效")
+    except json.JSONDecodeError:
+        raise HTTPException(400, "manifest.json 不是合法 JSON")
+    return manifest, code[:200000]
+
+
+def _uploaded_remotion_preview_html(title: str, description: str, group: str) -> str:
+    return f"""
+<div class="remotion-mock-frame" style="--r-bg:#08111f;--r-a:#22d3ee;--r-b:#f43f5e;">
+  <div class="remotion-mock-glow"></div>
+  <div class="remotion-mock-content">
+    <strong>{html.escape(title)}</strong>
+    <p>{html.escape(description or '用户上传 Remotion 模板包')}</p>
+    <em>{html.escape(group)}</em>
+  </div>
+</div>
+""".strip()
+
+
+async def create_remotion_template_from_zip(user: User, upload: UploadFile, library_group: str) -> RemotionTemplate:
+    path = await save_upload(upload, "effects")
+    manifest, code = _read_remotion_zip_manifest(path)
+    declared_type = str(manifest.get("type") or library_group or "effect").strip().lower()
+    group = "transition" if declared_type == "transition" else "effect"
+    title = str(manifest.get("name") or Path(upload.filename or path.name).stem or "用户上传 Remotion 特效")[:160]
+    description = str(manifest.get("description") or "用户上传 Remotion 模板包")[:500]
+    key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(manifest.get("key") or Path(upload.filename or title).stem).lower()).strip("_") or "custom"
+    issues = validate_remotion_code(code)
+    blueprint = {
+        "engine": "remotion",
+        "version": 1,
+        "title": title,
+        "category": group,
+        "source_summary": description,
+        "uploaded_manifest": manifest,
+        "package_url": media_url_for_file(str(path)),
+        "editor_asset": {
+            "groups": [group],
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "render_mode": "remotion_package",
+            "note": "用户上传 Remotion zip，已作为剪辑台代码资产入库。",
+        },
+        "validation_issues": issues,
+        "generator": "user-upload-remotion-zip-v1",
+    }
+    return await RemotionTemplate.create(
+        user=user,
+        title=title,
+        category=group,
+        description=description,
+        source_prompt=description,
+        source_type="upload_zip",
+        reference_files=[{"name": upload.filename or path.name, "url": media_url_for_file(str(path)), "path": str(path)}],
+        blueprint=blueprint,
+        props_schema=manifest.get("params_schema") if isinstance(manifest.get("params_schema"), dict) else {},
+        remotion_code=code,
+        preview_html=_uploaded_remotion_preview_html(title, description, group),
+        effect_keys=[key] if group == "effect" else [],
+        transition_keys=[key] if group == "transition" else [],
+        status="ready" if not issues else "needs_review",
+    )
 
 
 async def timeline_snapshot(project: TimelineProject) -> dict[str, Any]:
@@ -623,6 +1031,54 @@ def queue_render(background_tasks: BackgroundTasks, task_id: int) -> None:
         background_tasks.add_task(render_task, task_id)
 
 
+def queue_tool_job(background_tasks: BackgroundTasks, task_id: int) -> None:
+    if settings.use_celery:
+        from tasks import run_tool_job
+
+        run_tool_job.delay(task_id)
+    else:
+        background_tasks.add_task(run_tool_task, task_id)
+
+
+async def create_tool_task(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    *,
+    tool_key: str,
+    tool_name: str,
+    source_asset: Asset | None,
+    source_paths: list[Path] | None = None,
+    applied_config: dict[str, Any] | None = None,
+    ai_context: dict[str, Any] | None = None,
+) -> RenderTask:
+    user = await require_user(request)
+    context = {
+        "tool_key": tool_key,
+        "tool_name": tool_name,
+        "tool_module": "ai" if tool_key in {"video_transcription", "text_image_generation", "text_video_generation", "reference_video_generation", "voice_clone_tts"} else "edit",
+        "source_paths": [str(path) for path in source_paths or []],
+        "progress_stage": "等待工具执行",
+        **(ai_context or {}),
+    }
+    task = await RenderTask.create(
+        user=user,
+        template=None,
+        source_asset=source_asset,
+        applied_config=applied_config or {},
+        ai_context=context,
+    )
+    queue_tool_job(background_tasks, task.id)
+    return task
+
+
+async def save_tool_upload(upload: UploadFile, tool_key: str) -> tuple[Path, Asset]:
+    path = await save_upload(upload, "uploads")
+    asset_type = classify_media(upload.filename, upload.content_type)
+    asset = await Asset.create(name=upload.filename or path.name, file_path=str(path), asset_type=asset_type, tags=["toolkit", tool_key])
+    ensure_asset_preview(asset.id, asset.file_path, asset.asset_type)
+    return path, asset
+
+
 async def create_render_task(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -645,11 +1101,23 @@ async def create_render_task(
     return task
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def _landing_context(request: Request, **extra: Any) -> dict[str, Any]:
     template_list = await Template.filter(is_active=True)
     latest_tasks = await RenderTask.all().limit(8).prefetch_related("template", "user")
-    return render(request, "index.html", **await view_context(request, templates=template_list, latest_tasks=latest_tasks))
+    return await view_context(request, templates=template_list, latest_tasks=latest_tasks, **extra)
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/home", response_class=HTMLResponse)
+async def home(request: Request):
+    return render(request, "home.html", **await _landing_context(request, title=settings.app_name))
+
+
+@app.get("/templates", response_class=HTMLResponse)
+@app.get("/template-center", response_class=HTMLResponse)
+@app.get("/index", response_class=HTMLResponse)
+async def template_center(request: Request):
+    return render(request, "index.html", **await _landing_context(request, title=f"{settings.app_name} · 模板中心"))
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -705,6 +1173,115 @@ async def logout():
     response = RedirectResponse("/", status_code=303)
     logout_response(response)
     return response
+
+
+@app.get("/account", response_class=HTMLResponse)
+async def account_page(request: Request):
+    user = await require_user(request)
+    credentials = await AiProviderCredential.filter(user=user).order_by("-created_at")
+    credential_rows = [
+        {
+            "item": credential,
+            "api_key_mask": mask_secret(unseal_secret(credential.api_key_secret)),
+        }
+        for credential in credentials
+    ]
+    return render(
+        request,
+        "account.html",
+        **await view_context(
+            request,
+            credential_rows=credential_rows,
+            provider_presets=PROVIDER_PRESETS,
+            capability_labels=CAPABILITY_LABELS,
+        ),
+    )
+
+
+@app.post("/account/ai-providers")
+async def save_ai_provider(
+    request: Request,
+    credential_id: int = Form(0),
+    provider_key: str = Form("custom"),
+    label: str = Form(""),
+    base_url: str = Form(""),
+    api_key: str = Form(""),
+    default_chat_model: str = Form(""),
+    default_asr_model: str = Form(""),
+    default_image_model: str = Form(""),
+    default_video_model: str = Form(""),
+    capabilities: list[str] = Form([]),
+):
+    user = await require_user(request)
+    preset = PROVIDER_PRESETS.get(provider_key, PROVIDER_PRESETS["custom"])
+    clean_caps = [cap for cap in capabilities if cap in CAPABILITY_LABELS] or list(preset["capabilities"])
+    payload = {
+        "provider_key": provider_key,
+        "label": (label or preset["label"]).strip(),
+        "base_url": (base_url or preset["base_url"]).strip().rstrip("/"),
+        "default_chat_model": (default_chat_model or preset["default_chat_model"]).strip(),
+        "default_asr_model": (default_asr_model or preset["default_asr_model"]).strip(),
+        "default_image_model": (default_image_model or preset["default_image_model"]).strip(),
+        "default_video_model": (default_video_model or preset.get("default_video_model") or "").strip(),
+        "capabilities": clean_caps,
+        "is_enabled": True,
+    }
+    credential = await AiProviderCredential.get_or_none(id=credential_id, user=user) if credential_id else None
+    if credential:
+        if api_key.strip():
+            payload["api_key_secret"] = seal_secret(api_key.strip())
+        await credential.update_from_dict(payload).save()
+    else:
+        payload["api_key_secret"] = seal_secret(api_key.strip())
+        await AiProviderCredential.create(user=user, **payload)
+    return RedirectResponse("/account", status_code=303)
+
+
+@app.post("/account/ai-providers/{credential_id}/delete")
+async def delete_ai_provider(request: Request, credential_id: int):
+    user = await require_user(request)
+    credential = await AiProviderCredential.get_or_none(id=credential_id, user=user)
+    if credential:
+        await credential.delete()
+    return RedirectResponse("/account", status_code=303)
+
+
+@app.post("/api/ai-providers/heartbeat")
+async def api_ai_provider_heartbeat(request: Request):
+    user = await require_user(request)
+    data = await request.json()
+    capability = str(data.get("capability") or "chat")
+    credential: AiProviderCredential | None = None
+    if data.get("credential_id"):
+        credential = await AiProviderCredential.get_or_none(id=int(data["credential_id"]), user=user)
+        if not credential:
+            raise HTTPException(404)
+        model = str(data.get("model") or "")
+        if not model:
+            if capability == "asr":
+                model = credential.default_asr_model
+            elif capability == "image":
+                model = credential.default_image_model
+            elif capability == "video":
+                model = credential.default_video_model
+            else:
+                model = credential.default_chat_model
+        result = await check_provider_health(
+            base_url=credential.base_url,
+            api_key=unseal_secret(credential.api_key_secret),
+            model=model,
+            capability=capability,
+            provider_key=credential.provider_key,
+        )
+        await persist_health_result(credential, result)
+        return result
+    result = await check_provider_health(
+        base_url=str(data.get("base_url") or ""),
+        api_key=str(data.get("api_key") or ""),
+        model=str(data.get("model") or ""),
+        capability=capability,
+    )
+    return result
 
 
 @app.get("/template/{tid}", response_class=HTMLResponse)
@@ -826,6 +1403,8 @@ async def editor_home(request: Request):
     projects = await query.limit(24).prefetch_related("user")
     assets = [asset_payload(asset) for asset in await Asset.filter(asset_type__in=["video", "image", "audio"]).limit(80)]
     sfx_assets = [asset_payload(asset) for asset in await Asset.filter(asset_type="sfx").limit(80)]
+    remotion_editor_assets = await remotion_editor_assets_for_user(user)
+    custom_editor_assets = await custom_editor_asset_payloads()
     return render(
         request,
         "editor.html",
@@ -836,6 +1415,8 @@ async def editor_home(request: Request):
             project_data=None,
             assets=assets,
             sfx_assets=sfx_assets,
+            remotion_editor_assets=remotion_editor_assets,
+            custom_editor_assets=custom_editor_assets,
             selected_asset=None,
         ),
     )
@@ -846,41 +1427,60 @@ async def editor_project_create(
     request: Request,
     name: str = Form("未命名剪辑工程"),
     canvas: str = Form("vertical"),
-    source_media: UploadFile | None = File(None),
+    source_media: list[UploadFile] | None = File(None),
 ):
     user = await require_user(request)
     canvas_settings = normalize_canvas_settings(canvas)
     project = await TimelineProject.create(user=user, name=name or "未命名剪辑工程", **canvas_settings)
     tracks = await ensure_default_tracks(project)
-    if source_media and source_media.filename:
-        path = await save_upload(source_media)
-        asset_type = classify_media(source_media.filename, source_media.content_type)
-        asset = await Asset.create(name=source_media.filename or path.name, file_path=str(path), asset_type=asset_type, tags=["editor"])
-        ensure_asset_preview(asset.id, asset.file_path, asset.asset_type)
-        target_type = "video" if asset_type == "video" else "audio" if asset_type == "audio" else "overlay"
-        duration = probe_duration(path) if asset_type in {"video", "audio"} else 5
-        await TimelineClip.create(
-            track=tracks[target_type],
-            asset=asset,
-            name=asset.name,
-            clip_type=asset_type,
-            start_time=0,
-            duration=duration or 5,
-            params={"x": 80, "y": 120, "width": 420, "opacity": 1, "volume": 1},
-        )
-        project.duration = max(project.duration, duration or 5)
-        project.cover_url = media_url_for_file(str(path)) if asset_type == "image" else None
+    if source_media:
+        insert_cursors = {"video": 0.0, "audio": 0.0, "overlay": 0.0}
+        for upload in source_media:
+            if not upload or not upload.filename:
+                continue
+            path = await save_upload(upload)
+            asset_type = classify_media(upload.filename, upload.content_type)
+            asset = await Asset.create(name=upload.filename or path.name, file_path=str(path), asset_type=asset_type, tags=["editor"])
+            ensure_asset_preview(asset.id, asset.file_path, asset.asset_type)
+            target_type = "video" if asset_type == "video" else "audio" if asset_type == "audio" else "overlay"
+            duration = probe_duration(path) if asset_type in {"video", "audio"} else 5
+            clip_duration = duration or 5
+            start_time = insert_cursors.get(target_type, 0.0)
+            await TimelineClip.create(
+                track=tracks[target_type],
+                asset=asset,
+                name=asset.name,
+                clip_type=asset_type,
+                start_time=start_time,
+                duration=clip_duration,
+                source_duration=duration if duration > 0 else None,
+                params={"x": 80, "y": 120, "width": 420, "opacity": 1, "volume": 1},
+            )
+            insert_cursors[target_type] = start_time + clip_duration
+            project.duration = max(project.duration, start_time + clip_duration)
+            if asset_type == "image" and not project.cover_url:
+                project.cover_url = media_url_for_file(str(path))
         await project.save()
+        await recompute_project_duration(project)
     return RedirectResponse(f"/editor/project/{project.id}", status_code=303)
+
+
+@app.post("/editor/project/{pid}/delete")
+async def editor_project_delete(request: Request, pid: int):
+    _user, project = await assert_project_access(request, pid)
+    await project.delete()
+    return RedirectResponse("/editor", status_code=303)
 
 
 @app.get("/editor/project/{pid}", response_class=HTMLResponse)
 async def editor_project(request: Request, pid: int):
-    _user, project = await assert_project_access(request, pid)
+    user, project = await assert_project_access(request, pid)
     await ensure_default_tracks(project)
     project_data = await serialize_project(project)
     assets = await project_editor_asset_payloads(project.id)
     sfx_assets = [asset_payload(asset) for asset in await Asset.filter(asset_type="sfx").limit(120)]
+    remotion_editor_assets = await remotion_editor_assets_for_user(user)
+    custom_editor_assets = await custom_editor_asset_payloads()
     return render(
         request,
         "editor.html",
@@ -891,6 +1491,8 @@ async def editor_project(request: Request, pid: int):
             project_data=project_data,
             assets=assets,
             sfx_assets=sfx_assets,
+            remotion_editor_assets=remotion_editor_assets,
+            custom_editor_assets=custom_editor_assets,
             selected_asset=None,
         ),
     )
@@ -924,13 +1526,22 @@ async def api_editor_project_settings(
 
 
 @app.post("/api/editor/project/{pid}/asset")
-async def api_editor_asset_upload(request: Request, pid: int, media: UploadFile = File(...)):
+async def api_editor_asset_upload(request: Request, pid: int, media: list[UploadFile] = File(...)):
     await assert_project_access(request, pid)
-    path = await save_upload(media)
-    asset_type = classify_media(media.filename, media.content_type)
-    asset = await Asset.create(name=media.filename or path.name, file_path=str(path), asset_type=asset_type, tags=["editor", f"project:{pid}"])
-    ensure_asset_preview(asset.id, asset.file_path, asset.asset_type)
-    return asset_payload(asset)
+    if not media:
+        raise HTTPException(400, "缺少上传文件")
+    assets = []
+    for upload in media:
+        if not upload.filename:
+            continue
+        path = await save_upload(upload)
+        asset_type = classify_media(upload.filename, upload.content_type)
+        asset = await Asset.create(name=upload.filename or path.name, file_path=str(path), asset_type=asset_type, tags=["editor", f"project:{pid}"])
+        ensure_asset_preview(asset.id, asset.file_path, asset.asset_type)
+        assets.append(asset_payload(asset))
+    if not assets:
+        raise HTTPException(400, "缺少上传文件")
+    return {**assets[0], "ok": True, "assets": assets, "asset": assets[0]}
 
 
 @app.post("/api/editor/project/{pid}/asset/{aid}/delete")
@@ -990,7 +1601,7 @@ async def api_editor_clip_create(
     enabled: bool = Form(True),
     locked: bool = Form(False),
     start_time: float = Form(0),
-    duration: float = Form(5),
+    duration: float = Form(0),
     source_start: float = Form(0),
     fit_mode: str = Form("contain"),
     background_color: str = Form("#000000"),
@@ -1062,8 +1673,9 @@ async def api_editor_clip_create(
     clip_type = clip_type_for_asset(asset)
     if not clip_type_can_live_on_track(clip_type, track):
         raise HTTPException(400, "素材类型不能添加到该轨道")
+    media_duration = probe_duration(Path(asset.file_path)) if clip_type in {"video", "audio"} else 0.0
     if duration <= 0:
-        duration = probe_duration(Path(asset.file_path)) if clip_type in {"video", "audio"} else 5
+        duration = media_duration if media_duration > 0 else 5
     clip_start = max(0, start_time)
     clip_duration = max(0.2, duration or 5)
     later_clips = []
@@ -1084,6 +1696,7 @@ async def api_editor_clip_create(
         start_time=clip_start,
         duration=clip_duration,
         source_start=max(0, source_start),
+        source_duration=media_duration if media_duration > 0 else None,
         params={
             "enabled": bool(enabled),
             "locked": bool(locked),
@@ -1343,6 +1956,45 @@ async def api_editor_track_update(request: Request, tid: int, name: str = Form(.
     return {"ok": True, "project": await serialize_project(project)}
 
 
+@app.post("/api/editor/track/{tid}/view")
+async def api_editor_track_view(
+    request: Request,
+    tid: int,
+    height: int | None = Form(None),
+    collapsed: str | None = Form(None),
+):
+    track = await TimelineTrack.get_or_none(id=tid).prefetch_related("project")
+    if not track:
+        raise HTTPException(404)
+    _user, project = await assert_project_access(request, track.project_id)
+    meta = dict(project.timeline_meta or {})
+    track_ui = dict(meta.get("track_ui") or {})
+    current = dict(track_ui.get(str(track.id)) or {})
+    incoming_height = max(28, min(140, int(height))) if height is not None else None
+    next_collapsed = bool(current.get("collapsed"))
+    if collapsed is not None:
+        next_collapsed = str(collapsed).strip().lower() in {"1", "true", "yes", "on"}
+    if next_collapsed:
+        if incoming_height is not None and incoming_height > 32:
+            current["expanded_height"] = incoming_height
+        elif int(current.get("height") or 0) > 32:
+            current["expanded_height"] = int(current.get("height") or 46)
+        else:
+            current["expanded_height"] = max(34, min(140, int(current.get("expanded_height") or 46)))
+        current["height"] = 28
+        current["collapsed"] = True
+    else:
+        expanded_height = incoming_height if incoming_height is not None and incoming_height > 32 else int(current.get("expanded_height") or current.get("height") or 46)
+        current["height"] = max(34, min(140, expanded_height))
+        current["expanded_height"] = current["height"]
+        current["collapsed"] = False
+    track_ui[str(track.id)] = current
+    meta["track_ui"] = track_ui
+    await project.update_from_dict({"timeline_meta": meta}).save()
+    project.timeline_meta = meta
+    return {"ok": True, "project": await serialize_project(project)}
+
+
 @app.post("/api/editor/project/{pid}/tracks/reorder")
 async def api_editor_tracks_reorder(request: Request, pid: int, track_ids: str = Form(...)):
     _user, project = await assert_project_access(request, pid)
@@ -1513,6 +2165,11 @@ async def api_editor_clip_update(
     animation_in_duration: float = Form(0.4),
     animation_out: str = Form("none"),
     animation_out_duration: float = Form(0.4),
+    remotion_template_id: str = Form(""),
+    remotion_asset_group: str = Form(""),
+    remotion_asset_key: str = Form(""),
+    remotion_asset_name: str = Form(""),
+    remotion_clear_group: str = Form(""),
     ripple_trim: bool = Form(False),
 ):
     clip = await TimelineClip.get_or_none(id=cid).prefetch_related("track__project")
@@ -1607,6 +2264,19 @@ async def api_editor_clip_update(
     )
     if keyframes is not None:
         params["keyframes"] = normalize_transform_keyframes(keyframes, duration)
+    clear_group = remotion_clear_group.strip()
+    if clear_group and params.get("remotion_asset_group") == clear_group:
+        for key in ("remotion_template_id", "remotion_asset_group", "remotion_asset_key", "remotion_asset_name"):
+            params.pop(key, None)
+    elif remotion_template_id.strip() and remotion_asset_key.strip():
+        params.update(
+            {
+                "remotion_template_id": int(remotion_template_id),
+                "remotion_asset_group": remotion_asset_group.strip()[:32],
+                "remotion_asset_key": remotion_asset_key.strip()[:120],
+                "remotion_asset_name": remotion_asset_name.strip()[:120] or remotion_asset_key.strip()[:120],
+            }
+        )
     clean_name = (name or clip.name or "片段").strip()[:160] or "片段"
     if clip.clip_type == "text":
         clean_text = text.strip() or params.get("text") or clip.name
@@ -2248,6 +2918,593 @@ async def editor_project_render_selected(
     }
 
 
+@app.get("/toolkit", response_class=HTMLResponse)
+async def toolkit_home(request: Request):
+    await require_user(request)
+    return render(request, "toolkit.html", **await view_context(request, tools=toolkit_tools()))
+
+
+@app.get("/toolkit/burn-subtitles", response_class=HTMLResponse)
+async def toolkit_burn_subtitles_page(request: Request):
+    await require_user(request)
+    return render(request, "tool_burn_subtitles.html", **await view_context(request))
+
+
+@app.post("/toolkit/burn-subtitles")
+async def toolkit_burn_subtitles(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+    subtitle_file: UploadFile | None = File(None),
+    subtitles: str = Form(""),
+    review_confirmed: str = Form(""),
+    font_name: str = Form("Microsoft YaHei"),
+    font_size: int = Form(42),
+    font_color: str = Form("#ffffff"),
+    safe_x_percent: float = Form(10),
+    bottom_margin: int = Form(96),
+    outline: int = Form(3),
+    shadow: int = Form(1),
+    line_height: float = Form(1.15),
+    alignment: str = Form("bottom-center"),
+    background: str = Form("soft"),
+):
+    user = await require_user(request)
+    path, asset = await save_tool_upload(video, "burn_subtitles")
+    subtitle_text = (subtitles or "").strip()
+    subtitle_source = "edited_text"
+    uploaded_subtitle_name = subtitle_file.filename if subtitle_file and subtitle_file.filename else ""
+    if not subtitle_text and subtitle_file and subtitle_file.filename:
+        raw = await subtitle_file.read()
+        subtitle_text = raw.decode("utf-8-sig", errors="ignore").strip() or subtitle_text
+        subtitle_source = "uploaded_file"
+    if not subtitle_text:
+        raise HTTPException(400, "请上传 .srt/.ass 字幕文件或填写字幕内容")
+    if str(review_confirmed).lower() not in {"1", "true", "on", "yes"}:
+        raise HTTPException(400, "请先完成字幕审核确认，再开始烧录")
+    style_config = {
+        "font_name": font_name,
+        "font_size": font_size,
+        "font_color": font_color,
+        "safe_x_percent": safe_x_percent,
+        "bottom_margin": bottom_margin,
+        "outline": outline,
+        "shadow": shadow,
+        "line_height": line_height,
+        "alignment": alignment,
+        "background": background,
+    }
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="burn_subtitles",
+        tool_name="字幕烧录",
+        source_asset=asset,
+        source_paths=[path],
+        applied_config={
+            "subtitles": subtitle_text[:20000],
+            "subtitle_style": style_config,
+            "subtitle_source": subtitle_source,
+            "uploaded_subtitle_name": uploaded_subtitle_name,
+            "review_confirmed": True,
+        },
+        ai_context={
+            "subtitle_text": subtitle_text[:20000],
+            "subtitle_source": subtitle_source,
+            "uploaded_subtitle_name": uploaded_subtitle_name,
+            "review_confirmed": True,
+            **style_config,
+        },
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
+@app.get("/toolkit/concat-videos", response_class=HTMLResponse)
+async def toolkit_concat_videos_page(request: Request):
+    await require_user(request)
+    return render(request, "tool_concat_videos.html", **await view_context(request))
+
+
+@app.post("/toolkit/concat-videos")
+async def toolkit_concat_videos(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    videos: list[UploadFile] = File(...),
+):
+    await require_user(request)
+    source_paths: list[Path] = []
+    source_assets: list[Asset] = []
+    for upload in videos:
+        if not upload or not upload.filename:
+            continue
+        path, asset = await save_tool_upload(upload, "concat_videos")
+        source_paths.append(path)
+        source_assets.append(asset)
+    if len(source_paths) < 2:
+        raise HTTPException(400, "视频拼接至少需要上传 2 个视频")
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="concat_videos",
+        tool_name="视频拼接",
+        source_asset=source_assets[0],
+        source_paths=source_paths,
+        applied_config={"source_count": len(source_paths)},
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
+@app.get("/toolkit/extract-audio", response_class=HTMLResponse)
+async def toolkit_extract_audio_page(request: Request):
+    await require_user(request)
+    return render(request, "tool_extract_audio.html", **await view_context(request))
+
+
+@app.post("/toolkit/extract-audio")
+async def toolkit_extract_audio(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+):
+    await require_user(request)
+    path, asset = await save_tool_upload(video, "extract_audio")
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="extract_audio",
+        tool_name="提取音频",
+        source_asset=asset,
+        source_paths=[path],
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
+@app.get("/ai-tools", response_class=HTMLResponse)
+async def ai_tools_home(request: Request):
+    await require_user(request)
+    return render(
+        request,
+        "ai_tools.html",
+        **await view_context(request, tools=toolkit_ai_tools()),
+    )
+
+
+@app.get("/ai-tools/chat", response_class=HTMLResponse)
+async def ai_tools_chat_page(request: Request):
+    user = await require_user(request)
+    return render(
+        request,
+        "ai_tool_chat.html",
+        **await view_context(request, tools=toolkit_ai_tools(), providers=await chat_provider_catalog(user)),
+    )
+
+
+@app.get("/api/ai-tools/chat/providers")
+async def api_ai_tools_chat_providers(request: Request):
+    user = await require_user(request)
+    rows = await chat_provider_catalog(user)
+    return [
+        {
+            "id": item["id"],
+            "label": item["label"],
+            "display_label": item.get("display_label") or item["label"],
+            "source": item["source"],
+            "base_url": item["base_url"],
+            "model": item["model"],
+            "model_options": item["model_options"],
+            "configured": item["configured"],
+        }
+        for item in rows
+    ]
+
+
+@app.post("/api/ai-tools/chat")
+async def api_ai_tools_chat(request: Request):
+    user = await require_user(request)
+    data = await request.json()
+    provider_selection = str(data.get("provider") or data.get("provider_selection") or "env:qwen")
+    provider = await resolve_provider_config(
+        provider_selection,
+        user_id=user.id,
+        capability="chat",
+        base_url=str(data.get("base_url") or ""),
+        model=str(data.get("model") or ""),
+    )
+    provider_key = str(provider["provider_key"])
+    base_url = str(provider["base_url"])
+    model = str(provider["model"])
+    api_key = str(data.get("api_key") or provider["api_key"] or "")
+    if not api_key:
+        raise HTTPException(400, "缺少大模型 API Key，请先在用户中心配置对应厂商。")
+    if not base_url or not model:
+        raise HTTPException(400, "缺少大模型 Base URL 或模型名称。")
+    messages = build_chat_completion_messages(data)
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": clamp_number(data.get("temperature"), 0, 2, 0.7),
+        "max_tokens": clamp_int_value(data.get("max_tokens"), 64, 8192, 2048),
+    }
+    awaitable_endpoint = join_api_url(base_url, "/v1/chat/completions")
+    async with httpx.AsyncClient(timeout=120) as client:
+        response = await client.post(
+            awaitable_endpoint,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+    raise_for_status_with_body(response)
+    result = response.json()
+    reply = extract_chat_content_text(result).strip()
+    if not reply:
+        raise HTTPException(502, "模型接口没有返回可读文本。")
+    return {
+        "reply": reply,
+        "provider": provider_key,
+        "model": model,
+        "usage": result.get("usage") or {},
+    }
+
+
+@app.get("/ai-tools/video-transcription", response_class=HTMLResponse)
+async def ai_tools_video_transcription_page(request: Request):
+    user = await require_user(request)
+    return render(
+        request,
+        "ai_tool_video_transcription.html",
+        **await view_context(request, providers=await user_provider_catalog(user, "asr")),
+    )
+
+
+@app.post("/ai-tools/video-transcription")
+async def ai_tools_video_transcription(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+    provider: str = Form("env:aifox"),
+    base_url: str = Form(""),
+    model: str = Form(""),
+    asr_context: str = Form(""),
+    hotwords: str = Form(""),
+):
+    user = await require_user(request)
+    path, asset = await save_tool_upload(video, "video_transcription")
+    providers = await user_provider_catalog(user, "asr")
+    selected_provider = next((item for item in providers if item["id"] == provider), None)
+    default_base_url = selected_provider["base_url"] if selected_provider else provider_defaults(provider)["base_url"]
+    default_model = selected_provider["model"] if selected_provider else provider_defaults(provider)["model"]
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="video_transcription",
+        tool_name="视频转字幕",
+        source_asset=asset,
+        source_paths=[path],
+        applied_config={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or default_base_url).strip(),
+            "model": (model or default_model).strip(),
+            "asr_context": asr_context.strip(),
+            "hotwords": hotwords.strip(),
+        },
+        ai_context={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or default_base_url).strip(),
+            "model": (model or default_model).strip(),
+            "asr_context": asr_context.strip(),
+            "hotwords": hotwords.strip(),
+        },
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
+@app.get("/ai-tools/text-image", response_class=HTMLResponse)
+async def ai_tools_text_image(request: Request):
+    user = await require_user(request)
+    return render(
+        request,
+        "ai_tool_text_image.html",
+        **await view_context(request, tools=toolkit_ai_tools(), providers=await image_provider_catalog(user)),
+    )
+
+
+@app.post("/ai-tools/text-image")
+async def ai_tools_text_image_submit(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    provider: str = Form("env:aifox"),
+    base_url: str = Form(""),
+    model: str = Form(""),
+    prompt: str = Form(""),
+    size: str = Form("1024x1024"),
+    style: str = Form(""),
+    quality: str = Form(""),
+    negative_prompt: str = Form(""),
+    prompt_extend: str = Form("true"),
+    watermark: str = Form("false"),
+    seed: str = Form(""),
+    n: int = Form(1),
+):
+    user = await require_user(request)
+    image_providers = await image_provider_catalog(user)
+    selected_provider = next((item for item in image_providers if item["id"] == provider), None)
+    default_model = model or (selected_provider["model"] if selected_provider else image_providers[0]["model"] if image_providers else "")
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="text_image_generation",
+        tool_name="文生图",
+        source_asset=None,
+        applied_config={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or "").strip(),
+            "model": (model or default_model or "").strip(),
+            "prompt": prompt.strip(),
+            "size": size,
+            "style": style.strip(),
+            "quality": quality.strip(),
+            "negative_prompt": negative_prompt.strip(),
+            "prompt_extend": str(prompt_extend).lower() in {"1", "true", "yes", "on"},
+            "watermark": str(watermark).lower() in {"1", "true", "yes", "on"},
+            "seed": seed.strip(),
+            "n": n,
+        },
+        ai_context={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or "").strip(),
+            "model": (model or default_model or "").strip(),
+            "prompt": prompt.strip(),
+            "size": size,
+            "style": style.strip(),
+            "quality": quality.strip(),
+            "negative_prompt": negative_prompt.strip(),
+            "prompt_extend": str(prompt_extend).lower() in {"1", "true", "yes", "on"},
+            "watermark": str(watermark).lower() in {"1", "true", "yes", "on"},
+            "seed": seed.strip(),
+            "n": n,
+        },
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
+@app.get("/ai-tools/text-video", response_class=HTMLResponse)
+async def ai_tools_text_video(request: Request):
+    user = await require_user(request)
+    return render(
+        request,
+        "ai_tool_text_video.html",
+        **await view_context(
+            request,
+            tools=toolkit_ai_tools(),
+            providers=await video_provider_catalog(user, "text"),
+        ),
+    )
+
+
+@app.post("/ai-tools/text-video")
+async def ai_tools_text_video_submit(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    provider: str = Form("env:aifox"),
+    base_url: str = Form(""),
+    model: str = Form(""),
+    prompt: str = Form(""),
+    ratio: str = Form("9:16"),
+    resolution: str = Form("720p"),
+    duration: int = Form(5),
+    watermark: str = Form("false"),
+    audio_setting: str = Form(""),
+    negative_prompt: str = Form(""),
+    prompt_extend: str = Form("true"),
+    seed: str = Form(""),
+):
+    user = await require_user(request)
+    video_providers = await video_provider_catalog(user, "text")
+    selected_provider = next((item for item in video_providers if item["id"] == provider), None)
+    default_model = model or (selected_provider["model"] if selected_provider else video_providers[0]["model"] if video_providers else "")
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="text_video_generation",
+        tool_name="文生视频",
+        source_asset=None,
+        applied_config={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or "").strip(),
+            "model": (model or default_model or "").strip(),
+            "prompt": prompt.strip(),
+            "ratio": ratio,
+            "resolution": resolution,
+            "duration": duration,
+            "watermark": str(watermark).lower() in {"1", "true", "yes", "on"},
+            "audio_setting": audio_setting.strip(),
+            "negative_prompt": negative_prompt.strip(),
+            "prompt_extend": str(prompt_extend).lower() in {"1", "true", "yes", "on"},
+            "seed": seed.strip(),
+        },
+        ai_context={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or "").strip(),
+            "model": (model or default_model or "").strip(),
+            "prompt": prompt.strip(),
+            "ratio": ratio,
+            "resolution": resolution,
+            "duration": duration,
+            "watermark": str(watermark).lower() in {"1", "true", "yes", "on"},
+            "audio_setting": audio_setting.strip(),
+            "negative_prompt": negative_prompt.strip(),
+            "prompt_extend": str(prompt_extend).lower() in {"1", "true", "yes", "on"},
+            "seed": seed.strip(),
+        },
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
+@app.get("/ai-tools/reference-video", response_class=HTMLResponse)
+async def ai_tools_reference_video(request: Request):
+    user = await require_user(request)
+    return render(
+        request,
+        "ai_tool_reference_video.html",
+        **await view_context(
+            request,
+            tools=toolkit_ai_tools(),
+            providers=await video_provider_catalog(user, "reference"),
+        ),
+    )
+
+
+@app.post("/ai-tools/reference-video")
+async def ai_tools_reference_video_submit(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    reference_images: list[UploadFile] = File(...),
+    provider: str = Form("env:aifox"),
+    base_url: str = Form(""),
+    model: str = Form(""),
+    prompt: str = Form(""),
+    ratio: str = Form("9:16"),
+    resolution: str = Form("1080P"),
+    duration: int = Form(5),
+    watermark: str = Form("true"),
+    seed: str = Form(""),
+):
+    user = await require_user(request)
+    source_paths: list[Path] = []
+    source_assets: list[Asset] = []
+    for upload in reference_images:
+        if not upload or not upload.filename:
+            continue
+        path, asset = await save_tool_upload(upload, "reference_video_generation")
+        source_paths.append(path)
+        source_assets.append(asset)
+    if not source_paths:
+        raise HTTPException(400, "请上传至少一张参考图片")
+    if len(source_paths) > 9:
+        raise HTTPException(400, "参考生视频最多支持 9 张参考图片")
+    video_providers = await video_provider_catalog(user, "reference")
+    selected_provider = next((item for item in video_providers if item["id"] == provider), None)
+    default_model = model or (selected_provider["model"] if selected_provider else video_providers[0]["model"] if video_providers else "")
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="reference_video_generation",
+        tool_name="参考生视频",
+        source_asset=source_assets[0],
+        source_paths=source_paths,
+        applied_config={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or "").strip(),
+            "model": (model or default_model or "").strip(),
+            "prompt": prompt.strip(),
+            "ratio": ratio,
+            "resolution": resolution,
+            "duration": duration,
+            "watermark": str(watermark).lower() in {"1", "true", "yes", "on"},
+            "seed": seed.strip(),
+        },
+        ai_context={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or "").strip(),
+            "model": (model or default_model or "").strip(),
+            "prompt": prompt.strip(),
+            "ratio": ratio,
+            "resolution": resolution,
+            "duration": duration,
+            "watermark": str(watermark).lower() in {"1", "true", "yes", "on"},
+            "seed": seed.strip(),
+        },
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
+@app.get("/ai-tools/voice-clone-tts", response_class=HTMLResponse)
+async def ai_tools_voice_clone_tts(request: Request):
+    user = await require_user(request)
+    return render(
+        request,
+        "ai_tool_voice_clone_tts.html",
+        **await view_context(request, tools=toolkit_ai_tools(), providers=await tts_provider_catalog(user)),
+    )
+
+
+@app.post("/ai-tools/voice-clone-tts")
+async def ai_tools_voice_clone_tts_submit(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    reference_audio: UploadFile = File(...),
+    provider: str = Form("env:qwen"),
+    base_url: str = Form(""),
+    clone_model: str = Form("qwen-voice-enrollment"),
+    target_model: str = Form("qwen3-tts-vc-2026-01-22"),
+    synthesis_model: str = Form("qwen3-tts-vc-2026-01-22"),
+    preferred_name: str = Form("myvoice"),
+    reference_text: str = Form(""),
+    speech_text: str = Form(""),
+    language: str = Form("zh"),
+    language_type: str = Form("Chinese"),
+    output_format: str = Form("mp3"),
+    sample_rate: int = Form(24000),
+    instructions: str = Form(""),
+    optimize_instructions: str = Form("true"),
+    voice_consent: str = Form("false"),
+):
+    user = await require_user(request)
+    if str(voice_consent).lower() not in {"1", "true", "yes", "on"}:
+        raise HTTPException(400, "请确认拥有该声音的使用授权")
+    providers = await tts_provider_catalog(user)
+    selected_provider = next((item for item in providers if item["id"] == provider), None)
+    if not selected_provider:
+        raise HTTPException(
+            400,
+            "声音复刻必须选择阿里百炼/DashScope 原生 Provider，请在用户中心配置 qwen Provider 和 DashScope API Key。",
+        )
+    if selected_provider.get("configured") != "true":
+        raise HTTPException(
+            400,
+            "当前阿里百炼/DashScope Provider 还没有配置 API Key，请先在用户中心配置 DASHSCOPE_API_KEY 或 qwen Provider。",
+        )
+    default_model = selected_provider["model"] if selected_provider else target_model
+    path, asset = await save_tool_upload(reference_audio, "voice_clone_tts")
+    task_context = {
+        "provider": provider,
+        "provider_selection": provider,
+        "base_url": (base_url or "").strip(),
+        "model": (target_model or default_model or "").strip(),
+        "clone_model": clone_model.strip(),
+        "target_model": (target_model or default_model or "").strip(),
+        "synthesis_model": (synthesis_model or target_model or default_model or "").strip(),
+        "preferred_name": preferred_name.strip(),
+        "reference_text": reference_text.strip(),
+        "speech_text": speech_text.strip(),
+        "language": language.strip(),
+        "language_type": language_type.strip(),
+        "format": output_format.strip().lower(),
+        "sample_rate": sample_rate,
+        "instructions": instructions.strip(),
+        "optimize_instructions": str(optimize_instructions).lower() in {"1", "true", "yes", "on"},
+        "voice_consent": True,
+    }
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="voice_clone_tts",
+        tool_name="声音复刻口播",
+        source_asset=asset,
+        source_paths=[path],
+        applied_config=task_context,
+        ai_context=task_context,
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
 @app.get("/tasks", response_class=HTMLResponse)
 async def task_list(request: Request):
     user = await require_user(request)
@@ -2272,6 +3529,118 @@ def task_progress_payload(task: RenderTask) -> dict[str, Any]:
     }
 
 
+def request_preview_for_task(task: RenderTask) -> str:
+    payload = {
+        "task_id": task.id,
+        "tool": {
+            "key": (task.ai_context or {}).get("tool_key"),
+            "name": (task.ai_context or {}).get("tool_name"),
+            "module": (task.ai_context or {}).get("tool_module"),
+        },
+        "source_asset": {
+            "id": task.source_asset.id if task.source_asset else None,
+            "name": task.source_asset.name if task.source_asset else None,
+            "type": task.source_asset.asset_type if task.source_asset else None,
+            "path": compact_path(task.source_asset.file_path) if task.source_asset else None,
+        },
+        "applied_config": sanitize_request_value(task.applied_config),
+        "ai_context": sanitize_request_value(task.ai_context),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def safe_config_preview(config: dict[str, Any] | None) -> str:
+    return json.dumps(sanitize_request_value(config or {}), ensure_ascii=False, indent=2)
+
+
+def compact_path(value: str, max_length: int = 160) -> str:
+    text = str(value or "")
+    if len(text) <= max_length:
+        return text
+    return "..." + text[-max_length:]
+
+
+def sanitize_request_value(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    lowered_key = key.lower()
+    if is_sensitive_request_key(lowered_key):
+        return "[已隐藏敏感字段]"
+    if depth > 8:
+        return "[层级过深，已省略]"
+    if isinstance(value, dict):
+        return {str(item_key): sanitize_request_value(item_value, key=str(item_key), depth=depth + 1) for item_key, item_value in value.items()}
+    if isinstance(value, list):
+        if len(value) > 80:
+            return {
+                "_type": "list",
+                "_length": len(value),
+                "_preview": [sanitize_request_value(item, key=key, depth=depth + 1) for item in value[:20]],
+                "_truncated": True,
+            }
+        return [sanitize_request_value(item, key=key, depth=depth + 1) for item in value]
+    if isinstance(value, bytes):
+        return {"_type": "bytes", "_bytes": len(value), "_sha256": hashlib.sha256(value).hexdigest()[:16]}
+    if isinstance(value, str):
+        return sanitize_request_string(value, lowered_key)
+    return value
+
+
+def sanitize_request_string(value: str, lowered_key: str) -> Any:
+    if not value:
+        return value
+    looks_large_by_key = any(token in lowered_key for token in LARGE_REQUEST_KEYS)
+    if is_probable_base64(value):
+        return {
+            "_type": "base64",
+            "_chars": len(value),
+            "_sha256": hashlib.sha256(value[:100000].encode("utf-8", errors="ignore")).hexdigest()[:16],
+            "_preview": value[:80] + ("..." if len(value) > 80 else ""),
+        }
+    if value.startswith("data:") and "," in value:
+        header, packed = value.split(",", 1)
+        return {
+            "_type": "data_uri",
+            "_media_type": header[:120],
+            "_chars": len(value),
+            "_payload_chars": len(packed),
+            "_preview": header[:120] + ",...",
+        }
+    max_length = 500 if looks_large_by_key else 3000
+    if len(value) > max_length:
+        return {
+            "_type": "text",
+            "_chars": len(value),
+            "_preview": value[:max_length] + "...",
+            "_truncated": True,
+        }
+    return value
+
+
+def is_sensitive_request_key(lowered_key: str) -> bool:
+    if not lowered_key:
+        return False
+    if lowered_key in SENSITIVE_REQUEST_KEYS:
+        return True
+    separators = ("_", "-", ".")
+    return any(
+        lowered_key.endswith(f"{separator}{suffix}")
+        for separator in separators
+        for suffix in ("key", "token", "secret", "password")
+    )
+
+
+def is_probable_base64(value: str) -> bool:
+    text = value.strip()
+    if len(text) < 2048 or len(text) % 4 != 0:
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9+/=\s]+", text):
+        return False
+    try:
+        base64.b64decode(text[:4096], validate=False)
+    except Exception:
+        return False
+    return True
+
+
 @app.get("/task/{tid}", response_class=HTMLResponse)
 async def task_detail(request: Request, tid: int):
     user = await require_user(request)
@@ -2282,7 +3651,27 @@ async def task_detail(request: Request, tid: int):
         raise HTTPException(403)
     details = await EditDetail.filter(task=task)
     source_url = media_url_for_file(task.source_asset.file_path if task.source_asset else None)
-    return render(request, "task_detail.html", **await view_context(request, task=task, details=details, source_url=source_url))
+    result_preview = ""
+    if task.result_url:
+        result_path = settings.media_path / "results" / Path(task.result_url).name
+        if result_path.exists() and result_path.suffix.lower() in {".srt", ".txt", ".json"}:
+            try:
+                result_preview = result_path.read_text(encoding="utf-8")
+            except Exception:
+                result_preview = ""
+    return render(
+        request,
+        "task_detail.html",
+        **await view_context(
+            request,
+            task=task,
+            details=details,
+            source_url=source_url,
+            result_preview=result_preview,
+            request_preview=request_preview_for_task(task),
+            applied_config_preview=safe_config_preview(task.applied_config),
+        ),
+    )
 
 
 @app.post("/task/{tid}/rerun")
@@ -2331,6 +3720,193 @@ async def tasks_progress(request: Request, ids: str = ""):
         query = query.filter(user=user)
     tasks = await query
     return {"tasks": [task_progress_payload(task) for task in tasks]}
+
+
+@app.get("/remotion-templates", response_class=HTMLResponse)
+async def remotion_templates(request: Request):
+    user = await require_user(request)
+    query = RemotionTemplate.all()
+    if not user.is_admin:
+        query = query.filter(user=user)
+    templates_rows = await query.limit(60).prefetch_related("user")
+    return render(
+        request,
+        "remotion_templates.html",
+        **await view_context(request, templates_rows=templates_rows, library=remotion_asset_library()),
+    )
+
+
+@app.get("/remotion-templates/new", response_class=HTMLResponse)
+async def remotion_template_new(request: Request):
+    await require_user(request)
+    return render(request, "remotion_template_new.html", **await view_context(request, library=remotion_asset_library()))
+
+
+@app.get("/effect-assets/upload", response_class=HTMLResponse)
+async def effect_asset_upload_page(request: Request):
+    await require_user(request)
+    custom_assets = await custom_editor_asset_payloads()
+    return render(request, "effect_asset_upload.html", **await view_context(request, custom_assets=custom_assets))
+
+
+@app.post("/effect-assets/upload")
+async def effect_asset_upload(
+    request: Request,
+    asset_file: UploadFile = File(...),
+    asset_kind: str = Form("video_overlay"),
+    library_group: str = Form("effect"),
+    name: str = Form(""),
+    description: str = Form(""),
+):
+    user = await require_user(request)
+    if not asset_file or not asset_file.filename:
+        raise HTTPException(400, "请选择要上传的特效文件")
+    kind = _normalize_effect_upload_kind(asset_kind, asset_file.filename)
+    group = "transition" if library_group == "transition" else "effect"
+    if kind == "remotion_zip":
+        template = await create_remotion_template_from_zip(user, asset_file, group)
+        return RedirectResponse(f"/remotion-templates/{template.id}", status_code=303)
+    path = await save_upload(asset_file, "effects")
+    asset_type = _asset_type_for_effect_upload(kind, asset_file.filename, asset_file.content_type)
+    if kind == "sfx":
+        group = "effect"
+    clean_name = (name or asset_file.filename or path.name).strip()[:160] or path.name
+    tags = [
+        "effect_library",
+        f"effect_kind:{kind}",
+        f"library_group:{group}",
+        f"user:{user.id}",
+    ]
+    if description.strip():
+        tags.append(f"description:{description.strip()[:180]}")
+    if kind in {"video_overlay", "transparent_video"}:
+        tags.append("editor")
+    asset = await Asset.create(name=clean_name, file_path=str(path), asset_type=asset_type, tags=tags)
+    ensure_asset_preview(asset.id, asset.file_path, asset.asset_type)
+    ensure_asset_waveform(asset.id, asset.file_path, asset.asset_type)
+    return RedirectResponse("/effect-assets/upload", status_code=303)
+
+
+@app.post("/remotion-templates/create")
+async def remotion_template_create(
+    request: Request,
+    title: str = Form(""),
+    description: str = Form(""),
+    category: str = Form("motion"),
+    aspect_ratio: str = Form("9:16"),
+    duration: int = Form(8),
+    reference_files: list[UploadFile] | None = File(None),
+):
+    user = await require_user(request)
+    saved_references: list[dict[str, str]] = []
+    for upload in reference_files or []:
+        if not upload or not upload.filename:
+            continue
+        path = await save_upload(upload, "remotion")
+        saved_references.append(reference_file_payload(path))
+    draft = generate_remotion_draft(
+        title=title,
+        prompt=description,
+        category=category,
+        aspect_ratio=aspect_ratio,
+        duration=duration,
+        reference_files=[item["url"] for item in saved_references],
+    )
+    issues = validate_remotion_code(draft.remotion_code)
+    template = await RemotionTemplate.create(
+        user=user,
+        title=draft.title,
+        category=draft.category,
+        description=draft.description,
+        source_prompt=description.strip(),
+        source_type=draft.source_type,
+        reference_files=saved_references,
+        blueprint={**draft.blueprint, "validation_issues": issues, "generator": "local-rule-remotion-v1"},
+        props_schema=draft.props_schema,
+        remotion_code=draft.remotion_code,
+        preview_html=draft.preview_html,
+        effect_keys=draft.effect_keys,
+        transition_keys=draft.transition_keys,
+        status="ready" if not issues else "needs_review",
+    )
+    return RedirectResponse(f"/remotion-templates/{template.id}", status_code=303)
+
+
+@app.get("/api/remotion/library")
+async def api_remotion_library(request: Request):
+    await require_user(request)
+    return remotion_asset_library()
+
+
+@app.get("/remotion-templates/{template_id}/preview", response_class=HTMLResponse)
+async def remotion_template_preview(request: Request, template_id: int):
+    user = await require_user(request)
+    template = await RemotionTemplate.get_or_none(id=template_id).prefetch_related("user")
+    if not template:
+        raise HTTPException(404)
+    if not user.is_admin and template.user_id != user.id:
+        raise HTTPException(403)
+    return render(
+        request,
+        "remotion_template_preview.html",
+        **await view_context(request, template=template, blueprint=template.blueprint or {}),
+    )
+
+
+@app.get("/remotion-templates/{template_id}", response_class=HTMLResponse)
+async def remotion_template_detail(request: Request, template_id: int):
+    user = await require_user(request)
+    template = await RemotionTemplate.get_or_none(id=template_id).prefetch_related("user")
+    if not template:
+        raise HTTPException(404)
+    if not user.is_admin and template.user_id != user.id:
+        raise HTTPException(403)
+    validation_issues = validate_remotion_code(template.remotion_code)
+    return render(
+        request,
+        "remotion_template_detail.html",
+        **await view_context(request, template=template, validation_issues=validation_issues, library=remotion_asset_library()),
+    )
+
+
+@app.post("/remotion-templates/{template_id}/publish-editor")
+async def remotion_template_publish_editor(request: Request, template_id: int, asset_type: str = Form("both")):
+    user = await require_user(request)
+    template = await RemotionTemplate.get_or_none(id=template_id)
+    if not template:
+        raise HTTPException(404)
+    if not user.is_admin and template.user_id != user.id:
+        raise HTTPException(403)
+    groups: set[str] = set()
+    if asset_type in {"effect", "both"} and template.effect_keys:
+        groups.add("effect")
+    if asset_type in {"transition", "both"} and template.transition_keys:
+        groups.add("transition")
+    if not groups:
+        raise HTTPException(400, "这个模板没有可发布的特效或转场")
+    blueprint = dict(template.blueprint or {})
+    existing = blueprint.get("editor_asset") if isinstance(blueprint.get("editor_asset"), dict) else {}
+    merged_groups = sorted(set(existing.get("groups") or []) | groups)
+    blueprint["editor_asset"] = {
+        "groups": merged_groups,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+        "render_mode": "ffmpeg_approximation",
+        "note": "剪辑台当前使用 FFmpeg 近似参数，保留 Remotion 原始模板用于后续真渲染。",
+    }
+    await template.update_from_dict({"blueprint": blueprint, "status": "ready"}).save()
+    return RedirectResponse(f"/remotion-templates/{template.id}", status_code=303)
+
+
+@app.post("/remotion-templates/{template_id}/delete")
+async def remotion_template_delete(request: Request, template_id: int):
+    user = await require_user(request)
+    template = await RemotionTemplate.get_or_none(id=template_id)
+    if not template:
+        raise HTTPException(404)
+    if not user.is_admin and template.user_id != user.id:
+        raise HTTPException(403)
+    await template.delete()
+    return RedirectResponse("/remotion-templates", status_code=303)
 
 
 @app.get("/creative", response_class=HTMLResponse)

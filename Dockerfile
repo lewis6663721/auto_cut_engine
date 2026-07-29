@@ -12,6 +12,8 @@ RUN apt-get update \
         ffmpeg \
         fonts-noto-cjk \
         libsndfile1 \
+        nodejs \
+        npm \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -20,7 +22,10 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
-RUN mkdir -p /app/media/uploads /app/media/results /app/media/creative /app/media/sfx /app/media/previews /app/media/freezes
+RUN cd /app/remotion_runtime \
+    && npm ci
+
+RUN mkdir -p /app/media/uploads /app/media/results /app/media/creative /app/media/sfx /app/media/previews /app/media/freezes /app/media/effects /app/media/remotion /app/media/tmp
 
 EXPOSE 8000
 

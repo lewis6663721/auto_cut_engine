@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-3xl">
+  <a href="/toolkit" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回剪辑工具包</a>
+  <h1 class="page-title mt-3 font-black text-white">提取音频</h1>
+  <form class="soft-card tool-card mt-8 grid gap-5 p-6" action="/toolkit/extract-audio" method="post" enctype="multipart/form-data">
+    <label class="tool-field">视频文件
+      <input name="video" type="file" accept="video/*" required>
+    </label>
+    <div class="tool-hint">输出 mp3，可用于语音转写、配音处理或素材备份。</div>
+    <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">提取音频</button>
+  </form>
+</section>
+{% endblock %}

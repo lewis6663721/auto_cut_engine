@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/ai-tools" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回 AI 工具包</a>
+      <h1 class="page-title mt-3 font-black text-white">视频转字幕</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">上传视频，优先调用阿里百炼 Fun-ASR 输出带时间戳 SRT；远程失败时自动切本地 ASR 兜底。</p>
+    </div>
+    <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+  </div>
+
+  <form class="mx-auto grid max-w-3xl gap-5 soft-card tool-card p-6" action="/ai-tools/video-transcription" method="post" enctype="multipart/form-data">
+    <label class="tool-field">视频文件
+      <input name="video" type="file" accept="video/*" required>
+    </label>
+    <label class="tool-field">Provider（只提供 Key / Base URL）
+      <select id="asrProviderSelect" name="provider">
+        {% for provider in providers %}
+          <option value="{{ provider.id }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.model }}" data-model-options='{{ provider.model_options | tojson }}' data-configured="{{ provider.configured }}">
+            {{ provider.label }}{% if provider.source == "user" %} · 用户中心{% elif provider.source == "env" %} · 环境变量{% else %} · 本地{% endif %}{% if provider.configured == "true" %} · 已配置{% else %} · 未配置{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="grid gap-4 md:grid-cols-2">
+      <label class="tool-field">Base URL
+        <input id="asrBaseUrlInput" name="base_url" value="{{ providers[0].base_url if providers else '' }}">
+      </label>
+      <label class="tool-field">本次调用模型
+        <select id="asrModelSelect" name="model"></select>
+      </label>
+    </div>
+    <label class="tool-field">视频内容上下文
+      <textarea name="asr_context" rows="3" placeholder="可选。例如：服装测评、面料术语、英雄联盟游戏解说、人物名字等。"></textarea>
+    </label>
+    <label class="tool-field">热词
+      <input name="hotwords" placeholder="可选，用逗号分隔。例如：涤棉, 剪映, 英雄联盟, 亚索">
+    </label>
+    <div id="providerMissingHint" class="tool-hint">用户中心只保存 Key、Base URL 和默认值；实际转写以这里选择的“本次调用模型”为准。Provider 未配置、长音频超限或远程失败时会自动走本地 faster-whisper 兜底。</div>
+    <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">开始转字幕</button>
+  </form>
+</section>
+
+<script>
+const providerSelect = document.getElementById('asrProviderSelect');
+const baseUrlInput = document.getElementById('asrBaseUrlInput');
+const modelSelect = document.getElementById('asrModelSelect');
+const missingHint = document.getElementById('providerMissingHint');
+
+const fillSelectOptions = (select, values, currentValue) => {
+  if (!select) return;
+  select.textContent = '';
+  const rows = (values || []).filter(Boolean);
+  rows.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if (currentValue && rows.includes(currentValue)) {
+    select.value = currentValue;
+  } else if (rows.length) {
+    select.value = rows[0];
+  }
+};
+
+providerSelect?.addEventListener('change', () => {
+  const option = providerSelect.selectedOptions[0];
+  if (!option) return;
+  baseUrlInput.value = option.dataset.baseUrl || '';
+  fillSelectOptions(modelSelect, JSON.parse(option.dataset.modelOptions || '[]'), option.dataset.model || '');
+  if (missingHint) {
+    missingHint.textContent = option.dataset.configured === 'true'
+      ? '当前 Provider 已配置。本次会按页面选择的模型执行；Fun-ASR 会返回真实时间戳，失败时仍会自动切换本地兜底。'
+      : '当前 Provider 未配置 API Key。提交后会走本地兜底；需要真实模型转写时请到用户中心配置。';
+  }
+});
+
+if (providerSelect?.selectedOptions?.[0]) {
+  const option = providerSelect.selectedOptions[0];
+  fillSelectOptions(modelSelect, JSON.parse(option.dataset.modelOptions || '[]'), option.dataset.model || '');
+}
+</script>
+{% endblock %}

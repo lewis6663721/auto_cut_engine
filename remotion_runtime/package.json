@@ -1,0 +1,17 @@
+{
+  "name": "auto-cut-engine-remotion-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "remotion render"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.499",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "remotion": "4.0.499"
+  },
+  "devDependencies": {
+    "typescript": "5.9.2"
+  }
+}

@@ -15,9 +15,34 @@ class User(Model, TimestampMixin):
     is_admin = fields.BooleanField(default=False)
 
     tasks: fields.ReverseRelation["RenderTask"]
+    ai_provider_credentials: fields.ReverseRelation["AiProviderCredential"]
 
     class Meta:
         table = "ace_users"
+
+
+class AiProviderCredential(Model, TimestampMixin):
+    id = fields.IntField(primary_key=True)
+    user: fields.ForeignKeyRelation[User] = fields.ForeignKeyField(
+        "models.User", related_name="ai_provider_credentials", on_delete=fields.CASCADE
+    )
+    provider_key = fields.CharField(max_length=48)
+    label = fields.CharField(max_length=120)
+    base_url = fields.CharField(max_length=500)
+    api_key_secret = fields.TextField(default="")
+    default_chat_model = fields.CharField(max_length=120, default="")
+    default_asr_model = fields.CharField(max_length=120, default="")
+    default_image_model = fields.CharField(max_length=120, default="")
+    default_video_model = fields.CharField(max_length=120, default="")
+    capabilities = fields.JSONField(default=list)
+    is_enabled = fields.BooleanField(default=True)
+    last_status = fields.CharField(max_length=24, default="unchecked")
+    last_message = fields.TextField(default="")
+    last_checked_at = fields.DatetimeField(null=True)
+
+    class Meta:
+        table = "ace_ai_provider_credentials"
+        unique_together = (("user", "provider_key", "label"),)
 
 
 class Template(Model, TimestampMixin):
@@ -35,6 +60,32 @@ class Template(Model, TimestampMixin):
     class Meta:
         table = "ace_templates"
         ordering = ["sort_order", "id"]
+
+
+class RemotionTemplate(Model, TimestampMixin):
+    id = fields.IntField(primary_key=True)
+    user: fields.ForeignKeyRelation[User] = fields.ForeignKeyField(
+        "models.User", related_name="remotion_templates", on_delete=fields.CASCADE
+    )
+    title = fields.CharField(max_length=160)
+    category = fields.CharField(max_length=48, default="motion")
+    description = fields.TextField(default="")
+    source_prompt = fields.TextField(default="")
+    source_type = fields.CharField(max_length=32, default="description")
+    reference_files = fields.JSONField(default=list)
+    blueprint = fields.JSONField(default=dict)
+    props_schema = fields.JSONField(default=dict)
+    remotion_code = fields.TextField(default="")
+    preview_html = fields.TextField(default="")
+    preview_url = fields.CharField(max_length=800, null=True)
+    effect_keys = fields.JSONField(default=list)
+    transition_keys = fields.JSONField(default=list)
+    status = fields.CharField(max_length=24, default="draft")
+    version = fields.IntField(default=1)
+
+    class Meta:
+        table = "ace_remotion_templates"
+        ordering = ["-created_at"]
 
 
 class Asset(Model, TimestampMixin):

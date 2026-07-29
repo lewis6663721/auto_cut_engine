@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/ai-tools" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回 AI 工具包</a>
+      <h1 class="page-title mt-3 font-black text-white">参考生视频</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">上传 1-9 张参考图片并填写提示词，按 HappyHorse 参考生视频文档提交异步生成任务。</p>
+    </div>
+    <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+  </div>
+
+  <form class="tool-workbench" action="/ai-tools/reference-video" method="post" enctype="multipart/form-data">
+    <section class="tool-config-panel">
+      {% if providers %}
+        <div class="tool-section">
+          <h2>参考素材</h2>
+          <div class="reference-upload-toolbar">
+            <div>
+              <strong>参考图片（1-9 张）</strong>
+              <div id="referenceImageHint" class="tool-hint">支持 JPG / JPEG / PNG / WEBP。素材顺序会映射为 [Image 1]、[Image 2]...</div>
+            </div>
+            <button id="referenceAddButton" class="reference-icon-button" type="button" title="添加参考图片" aria-label="添加参考图片">+</button>
+          </div>
+          <input id="referenceImageInput" class="reference-file-input" name="reference_images" type="file" accept="image/jpeg,image/png,image/webp" multiple required>
+          <div id="referenceUploadList" class="reference-upload-list"></div>
+          <label class="tool-field">提示词
+            <textarea name="prompt" rows="6" placeholder="例如：[Image 1]中的古风少年站在雨夜城门前，镜头缓慢推进，电影感光影；[Image 2]中的长剑在闪电中反光。" required></textarea>
+          </label>
+        </div>
+
+        <div class="tool-section">
+          <h2>模型</h2>
+          <label class="tool-field">Provider
+            <select id="referenceProviderSelect" name="provider">
+              {% for provider in providers %}
+                <option value="{{ provider.id }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.model }}" data-model-options='{{ provider.model_options | tojson }}' data-configured="{{ provider.configured }}">
+                  {{ provider.label }}{% if provider.source == "user" %} · 用户中心{% else %} · 环境变量{% endif %}{% if provider.configured == "true" %} · 已配置{% else %} · 未配置{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">Base URL
+              <input id="referenceBaseUrlInput" name="base_url" value="{{ providers[0].base_url }}">
+            </label>
+            <label class="tool-field">参考生视频模型
+              <select id="referenceModelSelect" name="model"></select>
+            </label>
+          </div>
+          <div id="referenceProviderHint" class="tool-hint">下拉框只包含 HappyHorse 参考生视频模型：happyhorse-1.1-r2v、happyhorse-1.0-r2v。</div>
+        </div>
+
+        <div class="tool-section">
+          <h2>生成参数</h2>
+          <div class="grid gap-4 md:grid-cols-3">
+            <label class="tool-field">画幅
+              <select name="ratio">
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+                <option value="3:4">3:4</option>
+                <option value="4:3">4:3</option>
+                <option value="4:5">4:5</option>
+                <option value="5:4">5:4</option>
+                <option value="1:1">1:1</option>
+                <option value="9:21">9:21</option>
+                <option value="21:9">21:9</option>
+              </select>
+            </label>
+            <label class="tool-field">清晰度
+              <select name="resolution">
+                <option value="1080P">1080P</option>
+                <option value="720P">720P</option>
+              </select>
+            </label>
+            <label class="tool-field">时长
+              <input name="duration" type="number" min="3" max="15" step="1" value="5">
+            </label>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">随机种子
+              <input name="seed" type="number" min="0" max="2147483647" step="1" placeholder="留空为随机">
+            </label>
+            <label class="tool-field inline-tool-check">
+              <input name="watermark" type="checkbox" value="true" checked>
+              <span>添加 Happy Horse 水印</span>
+            </label>
+          </div>
+          <div class="tool-hint">按文档约束：时长 3-15 秒，seed 范围 0-2147483647；此工具不会提交反向提示词、智能改写或音频模式。</div>
+        </div>
+
+        <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">开始生成</button>
+      {% else %}
+        <div class="tool-empty-state">
+          <span class="tool-dock-icon"><i data-lucide="film"></i></span>
+          <strong>还没有可用的视频生成 Provider</strong>
+          <p>请先到用户中心配置支持视频生成的厂商，并选择 happyhorse-1.1-r2v 或 happyhorse-1.0-r2v 参考生视频模型。</p>
+          <a href="/account" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">去用户中心配置</a>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="subtitle-preview-panel">
+      <div class="reference-preview-grid" id="referencePreviewGrid">
+        <div class="reference-preview-empty">选择参考图片后会显示在这里</div>
+      </div>
+      <div class="tool-hint mt-4">预览顺序就是请求中的 media 顺序；生成完成后在任务详情页查看视频结果、请求参数和远程任务 ID。</div>
+    </section>
+  </form>
+</section>
+
+<script>
+const fillSelectOptions = (select, values, currentValue) => {
+  if (!select) return;
+  select.textContent = '';
+  const rows = (values || []).filter(Boolean);
+  rows.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if (currentValue && rows.includes(currentValue)) {
+    select.value = currentValue;
+  } else if (rows.length) {
+    select.value = rows[0];
+  }
+};
+
+const providerSelect = document.getElementById('referenceProviderSelect');
+const baseUrlInput = document.getElementById('referenceBaseUrlInput');
+const modelSelect = document.getElementById('referenceModelSelect');
+const providerHint = document.getElementById('referenceProviderHint');
+const referenceImageInput = document.getElementById('referenceImageInput');
+const referenceAddButton = document.getElementById('referenceAddButton');
+const referenceUploadList = document.getElementById('referenceUploadList');
+const referencePreviewGrid = document.getElementById('referencePreviewGrid');
+const referenceImageHint = document.getElementById('referenceImageHint');
+let referenceFiles = [];
+
+const syncProvider = () => {
+  const option = providerSelect?.selectedOptions?.[0];
+  if (!option) return;
+  baseUrlInput.value = option.dataset.baseUrl || '';
+  fillSelectOptions(modelSelect, JSON.parse(option.dataset.modelOptions || '[]'), option.dataset.model || '');
+  if (providerHint) {
+    providerHint.textContent = option.dataset.configured === 'true'
+      ? '当前 Provider 已配置，可提交参考生视频任务。'
+      : '当前 Provider 缺少 API Key，提交后模型接口会返回配置错误；请先到用户中心配置。';
+  }
+};
+providerSelect?.addEventListener('change', syncProvider);
+syncProvider();
+
+const syncReferenceInputFiles = () => {
+  if (!referenceImageInput) return;
+  const transfer = new DataTransfer();
+  referenceFiles.forEach((file) => transfer.items.add(file));
+  referenceImageInput.files = transfer.files;
+};
+
+const renderReferenceFiles = () => {
+  if (!referencePreviewGrid || !referenceUploadList) return;
+  referencePreviewGrid.textContent = '';
+  referenceUploadList.textContent = '';
+  if (!referenceFiles.length) {
+    const empty = document.createElement('div');
+    empty.className = 'reference-preview-empty';
+    empty.textContent = '选择参考图片后会显示在这里';
+    referencePreviewGrid.appendChild(empty);
+    if (referenceImageHint) referenceImageHint.textContent = '支持 JPG / JPEG / PNG / WEBP。素材顺序会映射为 [Image 1]、[Image 2]...';
+    referenceAddButton?.removeAttribute('disabled');
+    return;
+  }
+  if (referenceImageHint) {
+    referenceImageHint.textContent = `已选择 ${referenceFiles.length} 张参考图片，可在提示词里按顺序使用 [Image 1] 到 [Image ${referenceFiles.length}]。`;
+  }
+  referenceAddButton?.toggleAttribute('disabled', referenceFiles.length >= 9);
+  referenceFiles.forEach((file, index) => {
+    const row = document.createElement('div');
+    row.className = 'reference-upload-row';
+    const name = document.createElement('span');
+    name.textContent = `[Image ${index + 1}] ${file.name}`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'reference-icon-button reference-icon-button-danger';
+    remove.title = `删除 [Image ${index + 1}]`;
+    remove.setAttribute('aria-label', `删除 [Image ${index + 1}]`);
+    remove.textContent = '-';
+    remove.addEventListener('click', () => {
+      referenceFiles.splice(index, 1);
+      syncReferenceInputFiles();
+      renderReferenceFiles();
+    });
+    row.appendChild(name);
+    row.appendChild(remove);
+    referenceUploadList.appendChild(row);
+
+    const wrap = document.createElement('figure');
+    wrap.className = 'reference-preview-card';
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(file);
+    img.alt = `[Image ${index + 1}] ${file.name}`;
+    const caption = document.createElement('figcaption');
+    caption.textContent = `[Image ${index + 1}] ${file.name}`;
+    wrap.appendChild(img);
+    wrap.appendChild(caption);
+    referencePreviewGrid.appendChild(wrap);
+  });
+};
+
+referenceAddButton?.addEventListener('click', () => referenceImageInput?.click());
+
+referenceImageInput?.addEventListener('change', (event) => {
+  const incoming = Array.from(event.target.files || []);
+  if (!incoming.length) {
+    syncReferenceInputFiles();
+    return;
+  }
+  const total = referenceFiles.length + incoming.length;
+  if (total > 9) {
+    referenceFiles = referenceFiles.concat(incoming).slice(0, 9);
+    syncReferenceInputFiles();
+    renderReferenceFiles();
+    if (referenceImageHint) referenceImageHint.textContent = '最多保留前 9 张参考图片。';
+    return;
+  }
+  referenceFiles = referenceFiles.concat(incoming);
+  syncReferenceInputFiles();
+  renderReferenceFiles();
+});
+</script>
+{% endblock %}

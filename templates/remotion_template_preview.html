@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+{% set style = blueprint.get("style", {}) %}
+{% set palette = style.get("palette", ["#06111f", "#14f1ff", "#ff3864", "#f8fafc"]) %}
+{% set effects = blueprint.get("effect_keys", []) %}
+{% set transitions = blueprint.get("transition_keys", []) %}
+<section class="remotion-live-shell">
+  <div class="mb-6 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/remotion-templates/{{ template.id }}" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回模板详情</a>
+      <h1 class="page-title mt-3 font-black text-white">{{ template.title }} · 动态预览</h1>
+    </div>
+    <div class="remotion-live-tags">
+      {% for key in transitions %}<span>{{ key }}</span>{% endfor %}
+      {% for key in effects %}<span>{{ key }}</span>{% endfor %}
+    </div>
+  </div>
+
+  <div class="remotion-live-stage-wrap">
+    <div
+      class="remotion-live-stage {% for key in effects %}has-{{ key }} {% endfor %}{% for key in transitions %}has-{{ key }} {% endfor %}"
+      style="--r-bg: {{ palette[0] }}; --r-a: {{ palette[1] }}; --r-b: {{ palette[2] }}; --r-text: {{ palette[3] }};"
+    >
+      <div class="remotion-live-media before"></div>
+      <div class="remotion-live-media after"></div>
+      <div class="remotion-live-flash"></div>
+      <div class="remotion-live-panel"></div>
+      <div class="remotion-live-speed-lines">
+        {% for _ in range(18) %}<i></i>{% endfor %}
+      </div>
+      <div class="remotion-live-particles">
+        {% for _ in range(24) %}<i></i>{% endfor %}
+      </div>
+      <div class="remotion-live-copy">
+        <strong>{{ template.title }}</strong>
+        <p>{{ template.description }}</p>
+        <em>{{ style.get("mood", "代码化模板预览") }}</em>
+      </div>
+      <div class="remotion-live-subtitle">关键台词 · 自动化字幕包装</div>
+      <div class="remotion-live-progress"><span></span></div>
+    </div>
+  </div>
+</section>
+{% endblock %}

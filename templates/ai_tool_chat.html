@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/ai-tools" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回 AI 工具包</a>
+      <h1 class="page-title mt-3 font-black text-white">AI 对话助手</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">调用用户中心配置的大模型，用来生成剪辑思路、脚本、提示词，也可以用视觉模型分析图片。</p>
+    </div>
+    <a href="/account" class="muted-button rounded-xl px-5 py-3 text-sm font-black">用户中心</a>
+  </div>
+
+  <div class="tool-workbench chat-workbench">
+    <section class="tool-config-panel">
+      {% if providers %}
+        <div class="tool-section">
+          <h2>模型</h2>
+          <label class="tool-field">Provider
+            <select id="chatProviderSelect">
+              {% for provider in providers %}
+                <option value="{{ provider.id }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.model }}" data-model-options='{{ provider.model_options | tojson }}' data-configured="{{ provider.configured }}">
+                  {{ provider.display_label or provider.label }}{% if provider.configured == "true" %} · 已配置{% else %} · 未配置{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="tool-field">Base URL
+            <input id="chatBaseUrlInput" value="{{ providers[0].base_url }}">
+          </label>
+          <label class="tool-field">模型
+            <select id="chatModelSelect"></select>
+          </label>
+          <div id="chatProviderHint" class="tool-hint">默认可使用 qwen3.7-plus；如果要分析图片，请选择 qwen-vl-plus 等视觉模型。</div>
+        </div>
+
+        <div class="tool-section">
+          <h2>对话参数</h2>
+          <label class="tool-field">系统提示词
+            <textarea id="chatSystemPrompt" rows="5">你是剪·AI 的剪辑助手，回答要具体、可执行，优先围绕短视频剪辑、脚本、字幕、镜头和自动化工作流给建议。</textarea>
+          </label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">温度
+              <input id="chatTemperatureInput" type="number" min="0" max="2" step="0.1" value="0.7">
+            </label>
+            <label class="tool-field">最大输出
+              <input id="chatMaxTokensInput" type="number" min="64" max="8192" step="64" value="2048">
+            </label>
+          </div>
+        </div>
+
+        <button id="chatClearButton" class="muted-button rounded-xl px-5 py-3 text-sm font-black" type="button">清空当前对话</button>
+      {% else %}
+        <div class="tool-empty-state">
+          <span class="tool-dock-icon"><i data-lucide="messages-square"></i></span>
+          <strong>还没有可用的大模型 Provider</strong>
+          <p>请先到用户中心配置支持文本/分析能力的厂商，例如 Qwen / 百炼、OpenAI 或 AIFox。</p>
+          <a href="/account" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">去用户中心配置</a>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="subtitle-preview-panel chat-panel">
+      <div id="chatMessages" class="chat-messages">
+        <div class="chat-empty">可以直接问：帮我把这段口播改成适合漫剧剪辑的分镜脚本。</div>
+      </div>
+      {% if providers %}
+        <div id="chatAttachmentPreview" class="chat-attachment-preview"></div>
+        <div class="chat-input-bar">
+          <button id="chatImageButton" class="reference-icon-button" type="button" title="上传图片" aria-label="上传图片">+</button>
+          <input id="chatImageInput" class="reference-file-input" type="file" accept="image/jpeg,image/png,image/webp">
+          <input id="chatImageUrlInput" class="chat-image-url" placeholder="图片 URL，可留空">
+          <textarea id="chatMessageInput" rows="2" placeholder="输入你的问题，例如：帮我设计一个 30 秒带字幕和转场的剪辑方案"></textarea>
+          <button id="chatSendButton" class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="button">发送</button>
+        </div>
+      {% endif %}
+    </section>
+  </div>
+</section>
+
+<script>
+const fillSelectOptions = (select, values, currentValue) => {
+  if (!select) return;
+  select.textContent = '';
+  const rows = (values || []).filter(Boolean);
+  rows.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if (currentValue && rows.includes(currentValue)) {
+    select.value = currentValue;
+  } else if (rows.length) {
+    select.value = rows[0];
+  }
+};
+
+const chatState = { messages: [], imageDataUrl: '' };
+const providerSelect = document.getElementById('chatProviderSelect');
+const baseUrlInput = document.getElementById('chatBaseUrlInput');
+const modelSelect = document.getElementById('chatModelSelect');
+const providerHint = document.getElementById('chatProviderHint');
+const messagesEl = document.getElementById('chatMessages');
+const inputEl = document.getElementById('chatMessageInput');
+const sendButton = document.getElementById('chatSendButton');
+const clearButton = document.getElementById('chatClearButton');
+const imageButton = document.getElementById('chatImageButton');
+const imageInput = document.getElementById('chatImageInput');
+const imageUrlInput = document.getElementById('chatImageUrlInput');
+const attachmentPreview = document.getElementById('chatAttachmentPreview');
+
+const syncProvider = () => {
+  const option = providerSelect?.selectedOptions?.[0];
+  if (!option) return;
+  baseUrlInput.value = option.dataset.baseUrl || '';
+  fillSelectOptions(modelSelect, JSON.parse(option.dataset.modelOptions || '[]'), option.dataset.model || '');
+  if (providerHint) {
+    providerHint.textContent = option.dataset.configured === 'true'
+      ? '当前 Provider 已配置，可以发起对话。'
+      : '当前 Provider 缺少 API Key；请先到用户中心配置后再对话。';
+  }
+};
+
+const renderMessages = () => {
+  if (!messagesEl) return;
+  messagesEl.textContent = '';
+  if (!chatState.messages.length) {
+    const empty = document.createElement('div');
+    empty.className = 'chat-empty';
+    empty.textContent = '可以直接问：帮我把这段口播改成适合漫剧剪辑的分镜脚本。';
+    messagesEl.appendChild(empty);
+    return;
+  }
+  chatState.messages.forEach((message) => {
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble chat-bubble-${message.role}`;
+    bubble.textContent = message.content;
+    messagesEl.appendChild(bubble);
+  });
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+};
+
+const renderAttachment = () => {
+  if (!attachmentPreview) return;
+  attachmentPreview.textContent = '';
+  const url = (imageUrlInput?.value || '').trim();
+  if (!chatState.imageDataUrl && !url) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-attachment-chip';
+  const label = document.createElement('span');
+  label.textContent = chatState.imageDataUrl ? '已上传图片' : '已填写图片 URL';
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.textContent = '-';
+  remove.title = '移除图片';
+  remove.className = 'reference-icon-button reference-icon-button-danger';
+  remove.addEventListener('click', () => {
+    chatState.imageDataUrl = '';
+    if (imageInput) imageInput.value = '';
+    if (imageUrlInput) imageUrlInput.value = '';
+    renderAttachment();
+  });
+  wrap.appendChild(label);
+  wrap.appendChild(remove);
+  attachmentPreview.appendChild(wrap);
+};
+
+const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ''));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(file);
+});
+
+const sendMessage = async () => {
+  const text = (inputEl?.value || '').trim();
+  if (!text || !sendButton) return;
+  const imageUrl = chatState.imageDataUrl || (imageUrlInput?.value || '').trim();
+  chatState.messages.push({ role: 'user', content: text });
+  inputEl.value = '';
+  renderMessages();
+  sendButton.disabled = true;
+  sendButton.textContent = '发送中';
+  try {
+    const response = await fetch('/api/ai-tools/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: providerSelect?.value || 'env:qwen',
+        base_url: baseUrlInput?.value || '',
+        model: modelSelect?.value || '',
+        system_prompt: document.getElementById('chatSystemPrompt')?.value || '',
+        temperature: document.getElementById('chatTemperatureInput')?.value || '0.7',
+        max_tokens: document.getElementById('chatMaxTokensInput')?.value || '2048',
+        messages: chatState.messages,
+        image_urls: imageUrl ? [imageUrl] : [],
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || data.message || '对话请求失败');
+    chatState.messages.push({ role: 'assistant', content: data.reply || '' });
+    chatState.imageDataUrl = '';
+    if (imageInput) imageInput.value = '';
+    if (imageUrlInput) imageUrlInput.value = '';
+    renderAttachment();
+  } catch (error) {
+    chatState.messages.push({ role: 'assistant', content: `请求失败：${error.message || error}` });
+  } finally {
+    sendButton.disabled = false;
+    sendButton.textContent = '发送';
+    renderMessages();
+  }
+};
+
+providerSelect?.addEventListener('change', syncProvider);
+clearButton?.addEventListener('click', () => {
+  chatState.messages = [];
+  chatState.imageDataUrl = '';
+  if (imageInput) imageInput.value = '';
+  if (imageUrlInput) imageUrlInput.value = '';
+  renderAttachment();
+  renderMessages();
+});
+sendButton?.addEventListener('click', sendMessage);
+inputEl?.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') sendMessage();
+});
+imageButton?.addEventListener('click', () => imageInput?.click());
+imageInput?.addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  chatState.imageDataUrl = await fileToDataUrl(file);
+  if (imageUrlInput) imageUrlInput.value = '';
+  renderAttachment();
+});
+imageUrlInput?.addEventListener('input', renderAttachment);
+syncProvider();
+renderMessages();
+</script>
+{% endblock %}

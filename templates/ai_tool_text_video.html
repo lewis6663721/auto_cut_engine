@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/ai-tools" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回 AI 工具包</a>
+      <h1 class="page-title mt-3 font-black text-white">文生视频</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">输入视频提示词，系统只展示支持文生视频的 Provider 和 t2v 模型。</p>
+    </div>
+    <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+  </div>
+
+  <form class="tool-workbench" action="/ai-tools/text-video" method="post">
+    <section class="tool-config-panel">
+      {% if providers %}
+        <div class="tool-section">
+          <h2>提示词</h2>
+          <label class="tool-field">视频描述
+            <textarea id="videoPromptInput" name="prompt" rows="7" placeholder="例如：峡谷上空镜头高速推进，英雄释放技能，粒子爆发，节奏紧张，电影级运动模糊" required></textarea>
+          </label>
+          <label class="tool-field">反向提示词
+            <textarea name="negative_prompt" rows="3" placeholder="例如：低清晰度、画面闪烁、人物畸形、文字水印"></textarea>
+          </label>
+        </div>
+
+        <div class="tool-section">
+          <h2>模型</h2>
+          <label class="tool-field">Provider
+            <select id="videoProviderSelect" name="provider">
+              {% for provider in providers %}
+                <option value="{{ provider.id }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.model }}" data-model-options='{{ provider.model_options | tojson }}' data-configured="{{ provider.configured }}">
+                  {{ provider.label }}{% if provider.source == "user" %} · 用户中心{% else %} · 环境变量{% endif %}{% if provider.configured == "true" %} · 已配置{% else %} · 未配置{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">Base URL
+              <input id="videoBaseUrlInput" name="base_url" value="{{ providers[0].base_url }}">
+            </label>
+            <label class="tool-field">文生视频模型
+              <select id="videoModelSelect" name="model"></select>
+            </label>
+          </div>
+          <div id="videoProviderHint" class="tool-hint">下拉框只包含支持文生视频的模型，例如 happyhorse-1.1-t2v、wan2.7-t2v。</div>
+        </div>
+
+        <div class="tool-section">
+          <h2>生成参数</h2>
+          <div class="grid gap-4 md:grid-cols-3">
+            <label class="tool-field">画幅
+              <select name="ratio">
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+                <option value="1:1">1:1</option>
+              </select>
+            </label>
+            <label class="tool-field">清晰度
+              <select name="resolution">
+                <option value="720p">720p</option>
+                <option value="1080p">1080p</option>
+              </select>
+            </label>
+            <label class="tool-field">时长
+              <select name="duration">
+                <option value="5">5 秒</option>
+                <option value="8">8 秒</option>
+                <option value="10">10 秒</option>
+              </select>
+            </label>
+          </div>
+          <label class="tool-field">音频模式
+            <select name="audio_setting">
+              <option value="">不指定</option>
+              <option value="auto">自动配音效</option>
+              <option value="off">不要音频</option>
+            </select>
+          </label>
+          <label class="tool-field">随机种子
+            <input name="seed" type="number" min="0" step="1" placeholder="留空为随机">
+          </label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">智能改写
+              <select name="prompt_extend">
+                <option value="true">开启</option>
+                <option value="false">关闭</option>
+              </select>
+            </label>
+            <label class="tool-field inline-tool-check">
+              <input name="watermark" type="checkbox" value="true">
+              <span>保留模型水印</span>
+            </label>
+          </div>
+        </div>
+
+        <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">开始生成</button>
+      {% else %}
+        <div class="tool-empty-state">
+          <span class="tool-dock-icon"><i data-lucide="video"></i></span>
+          <strong>还没有可用的文生视频 Provider</strong>
+          <p>请先到用户中心配置支持视频生成的厂商，并选择 happyhorse-1.1-t2v、wan2.7-t2v 等文生视频模型。</p>
+          <a href="/account" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">去用户中心配置</a>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="subtitle-preview-panel">
+      <div class="ai-preview-card ai-preview-card-video">
+        <span class="tool-dock-icon"><i data-lucide="video"></i></span>
+        <strong>生成后在任务详情页预览视频</strong>
+        <p id="videoPromptPreview">这里会同步显示你输入的视频描述，方便提交前复核。</p>
+      </div>
+      <div class="tool-hint mt-4">文生视频是异步任务，任务详情页会显示提交、轮询、下载和完成等进度阶段。</div>
+    </section>
+  </form>
+</section>
+
+<script>
+const fillSelectOptions = (select, values, currentValue) => {
+  if (!select) return;
+  select.textContent = '';
+  const rows = (values || []).filter(Boolean);
+  rows.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if (currentValue && rows.includes(currentValue)) {
+    select.value = currentValue;
+  } else if (rows.length) {
+    select.value = rows[0];
+  }
+};
+
+const videoProviderSelect = document.getElementById('videoProviderSelect');
+const videoBaseUrlInput = document.getElementById('videoBaseUrlInput');
+const videoModelSelect = document.getElementById('videoModelSelect');
+const videoProviderHint = document.getElementById('videoProviderHint');
+const syncVideoProvider = () => {
+  const option = videoProviderSelect?.selectedOptions?.[0];
+  if (!option) return;
+  videoBaseUrlInput.value = option.dataset.baseUrl || '';
+  fillSelectOptions(videoModelSelect, JSON.parse(option.dataset.modelOptions || '[]'), option.dataset.model || '');
+  if (videoProviderHint) {
+    videoProviderHint.textContent = option.dataset.configured === 'true'
+      ? '当前 Provider 已配置，可提交文生视频任务。'
+      : '当前 Provider 缺少 API Key，提交后会提示补齐配置。';
+  }
+};
+videoProviderSelect?.addEventListener('change', syncVideoProvider);
+syncVideoProvider();
+
+document.getElementById('videoPromptInput')?.addEventListener('input', (event) => {
+  const target = document.getElementById('videoPromptPreview');
+  if (target) target.textContent = event.target.value.trim() || '这里会同步显示你输入的视频描述，方便提交前复核。';
+});
+</script>
+{% endblock %}

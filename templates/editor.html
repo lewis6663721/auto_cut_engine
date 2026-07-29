@@ -24,7 +24,7 @@
     </label>
     <label class="block">
       <span class="text-sm font-black text-slate-400">初始素材</span>
-      <input name="source_media" type="file" accept="video/*,audio/*,image/*" class="mt-2 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 text-sm font-semibold text-slate-300">
+      <input name="source_media" type="file" accept="video/*,audio/*,image/*" multiple class="mt-2 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 text-sm font-semibold text-slate-300">
     </label>
     <button class="gradient-action inline-flex items-center justify-center gap-2 rounded-lg px-5 py-3 text-sm font-black" type="submit">
       <i data-lucide="plus" class="h-4 w-4"></i>新建
@@ -33,13 +33,20 @@
 
   <div class="grid gap-4 md:grid-cols-3">
     {% for item in projects %}
-      <a href="/editor/project/{{ item.id }}" class="soft-card block p-5 transition hover:border-cyan-400/60">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="text-lg font-black text-white">{{ item.name }}</h2>
-          <span class="tag-pill">{{ item.canvas_width }}x{{ item.canvas_height }}</span>
+      <article class="soft-card editor-project-card p-5 transition hover:border-cyan-400/60">
+        <div class="flex items-start justify-between gap-3">
+          <a href="/editor/project/{{ item.id }}" class="min-w-0 flex-1">
+            <h2 class="text-lg font-black text-white">{{ item.name }}</h2>
+            <p class="mt-4 text-sm font-semibold text-slate-500">{{ item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "" }}</p>
+          </a>
+          <div class="flex items-center gap-2">
+            <span class="tag-pill">{{ item.canvas_width }}x{{ item.canvas_height }}</span>
+            <form method="post" action="/editor/project/{{ item.id }}/delete">
+              <button class="jy-icon-button jy-danger-button" type="submit" title="删除工程"><i data-lucide="trash-2"></i></button>
+            </form>
+          </div>
         </div>
-        <p class="mt-4 text-sm font-semibold text-slate-500">{{ item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "" }}</p>
-      </a>
+      </article>
     {% else %}
       <div class="soft-card p-8 text-center font-semibold text-slate-500 md:col-span-3">还没有剪辑工程，先新建一个。</div>
     {% endfor %}
@@ -59,6 +66,9 @@
       <button class="jy-icon-button" type="button" title="布局"><i data-lucide="panel-top"></i></button>
       <button class="jy-icon-button" type="button" title="加叠加轨" id="addTrackBtn"><i data-lucide="layers"></i></button>
       <button class="jy-icon-button" type="button" title="清理空轨道" id="cleanupTracksBtn"><i data-lucide="panel-bottom-close"></i></button>
+      <form method="post" action="/editor/project/{{ project.id }}/delete">
+        <button class="jy-icon-button jy-danger-button" type="submit" title="删除工程"><i data-lucide="trash-2"></i></button>
+      </form>
       <form class="jy-export-form" method="post" action="/editor/project/{{ project.id }}/render">
         <select name="resolution" title="导出分辨率">
           <option value="project">原画布</option>
@@ -142,10 +152,10 @@
         <button type="button" data-panel-tab="ai">AI 素材</button>
       </div>
       <label class="jy-import-box jy-media-pane {% if initial_media_panel == 'import' %}is-active{% endif %}" data-media-panel="import">
-        <input id="assetUpload" type="file" accept="video/*,audio/*,image/*" class="hidden">
+        <input id="assetUpload" type="file" accept="video/*,audio/*,image/*" multiple class="hidden">
         <i data-lucide="plus-circle"></i>
         <strong>导入</strong>
-        <span>视频、音频、图片，支持拖到时间线</span>
+        <span>可一次导入多条视频、音频、图片，支持拖到时间线</span>
       </label>
       <section class="jy-subtitle-box jy-media-pane" data-media-panel="subtitle">
         <div class="jy-section-head"><strong>批量字幕</strong><span>支持 SRT/VTT</span></div>
@@ -153,7 +163,15 @@
         <button id="bulkSubtitleBtn" type="button">生成字幕片段</button>
       </section>
       <div class="jy-media-section jy-media-pane {% if initial_media_panel == 'mine' %}is-active{% endif %}" data-media-panel="mine">
-        <div class="jy-section-head"><strong>我的素材</strong><span>{{ assets|length }}</span></div>
+        <div class="jy-section-head">
+          <strong>我的素材</strong>
+          <span id="assetSelectionSummary">{{ assets|length }}</span>
+          <div class="asset-bulk-actions">
+            <button id="selectAllAssetsBtn" type="button">全选</button>
+            <button id="addSelectedAssetsBtn" type="button">添加选中</button>
+            <button id="deleteSelectedAssetsBtn" type="button">删除选中</button>
+          </div>
+        </div>
         <div id="assetList" class="jy-asset-grid">
           {% for asset in assets %}
             <div class="asset-item jy-asset-card" role="button" tabindex="0" data-asset="{{ asset|tojson|forceescape }}">
@@ -200,7 +218,7 @@
         </div>
       </section>
       <section class="jy-media-section jy-media-pane" data-media-panel="effect">
-        <div class="jy-section-head"><strong>特效/滤镜</strong><span>作用到当前片段</span></div>
+        <div class="jy-section-head"><strong>特效/滤镜</strong><span>作用到当前片段</span><a href="/effect-assets/upload">导入</a></div>
         <div class="jy-preset-grid">
           <button class="effect-preset" type="button" data-effect="vivid"><b>鲜明</b><span>高饱和高对比</span></button>
           <button class="effect-preset" type="button" data-effect="cinematic"><b>电影</b><span>轻微压暗</span></button>
@@ -208,10 +226,25 @@
           <button class="effect-preset" type="button" data-effect="cool"><b>冷色</b><span>紧张氛围</span></button>
           <button class="effect-preset" type="button" data-effect="soft"><b>柔光</b><span>轻微虚化</span></button>
           <button class="effect-preset" type="button" data-effect="impact"><b>冲击</b><span>锐化加强</span></button>
+          {% for item in remotion_editor_assets.effects %}
+            <button class="effect-preset is-remotion" type="button" data-effect="{{ item.preset_key }}" title="{{ item.template_title }} / {{ item.description }}">
+              <b>{{ item.name }}</b><span>Remotion · {{ item.template_title }}</span>
+            </button>
+          {% endfor %}
+          {% for item in custom_editor_assets.effects %}
+            <button class="effect-preset is-custom-asset" type="button" data-custom-effect="{{ item.preset_key }}" data-asset="{{ item | tojson | forceescape }}" title="{{ item.description }}">
+              <b>{{ item.name }}</b><span>素材 · {{ item.kind_label }}</span>
+            </button>
+          {% endfor %}
+          {% for item in custom_editor_assets.pending %}
+            <button class="effect-preset is-custom-asset is-pending" type="button" title="{{ item.description }}">
+              <b>{{ item.name }}</b><span>{{ item.kind_label }} · 待接入渲染</span>
+            </button>
+          {% endfor %}
         </div>
       </section>
       <section class="jy-media-section jy-media-pane" data-media-panel="transition">
-        <div class="jy-section-head"><strong>转场库</strong><span>作用到当前片段</span></div>
+        <div class="jy-section-head"><strong>转场库</strong><span>作用到当前片段</span><a href="/effect-assets/upload">导入</a></div>
         <div class="jy-preset-grid">
           <button class="transition-preset" type="button" data-transition="fade"><b>叠化</b><span>柔和过渡</span></button>
           <button class="transition-preset" type="button" data-transition="wipeleft"><b>左擦除</b><span>画面擦入</span></button>
@@ -219,6 +252,16 @@
           <button class="transition-preset" type="button" data-transition="slideleft"><b>左滑动</b><span>镜头推移</span></button>
           <button class="transition-preset" type="button" data-transition="slideright"><b>右滑动</b><span>镜头推移</span></button>
           <button class="transition-preset" type="button" data-transition="circleopen"><b>圆形打开</b><span>焦点揭示</span></button>
+          {% for item in remotion_editor_assets.transitions %}
+            <button class="transition-preset is-remotion" type="button" data-transition="{{ item.preset_key }}" title="{{ item.template_title }} / {{ item.description }}">
+              <b>{{ item.name }}</b><span>Remotion · {{ item.template_title }}</span>
+            </button>
+          {% endfor %}
+          {% for item in custom_editor_assets.transitions %}
+            <button class="transition-preset is-custom-asset" type="button" data-custom-transition="{{ item.preset_key }}" data-asset="{{ item | tojson | forceescape }}" title="{{ item.description }}">
+              <b>{{ item.name }}</b><span>素材 · {{ item.kind_label }}</span>
+            </button>
+          {% endfor %}
         </div>
       </section>
       <section class="jy-media-section jy-media-pane" data-media-panel="ai">
@@ -463,6 +506,9 @@
           <label class="param-label">模糊<input id="clipBlur" type="number" step="0.1" min="0" max="20" value="0"></label>
           <label class="param-label">锐化<input id="clipSharpen" type="number" step="0.1" min="0" max="2" value="0"></label>
         </div>
+        <div class="param-action-row">
+          <button id="clearClipEffectBtn" type="button">清除当前片段特效</button>
+        </div>
         <div class="transform-toggle-row">
           <label><input id="clipChromaEnabled" type="checkbox"> 抠像</label>
         </div>
@@ -511,6 +557,9 @@
             </select>
           </label>
           <label class="param-label">转场时长<input id="clipTransitionDuration" type="number" step="0.1" min="0" max="3" value="0"></label>
+        </div>
+        <div class="param-action-row">
+          <button id="clearClipTransitionBtn" type="button">清除当前片段转场</button>
         </div>
         <button class="jy-save" type="submit">修改</button>
       </form>
@@ -581,10 +630,12 @@
 const projectId = {{ project.id }};
 let projectData = {{ project_data|tojson }};
 let selectedAsset = null;
+let selectedAssetIds = new Set();
 let selectedClip = null;
 let selectedClipId = null;
 let selectedClipIds = new Set();
 let draggedAsset = null;
+let draggedAssets = [];
 let draggedClip = null;
 let assetPointerDragState = null;
 let assetDragGhost = null;
@@ -593,6 +644,7 @@ let trimState = null;
 let timelineDragState = null;
 let trackDragState = null;
 let selectionBoxState = null;
+let playheadScrubState = null;
 let playheadTime = 0;
 let timelineZoom = 42;
 let snapEnabled = true;
@@ -605,6 +657,7 @@ let clipboardClipSnapshots = [];
 let clipboardClipAttrs = null;
 let previewDragState = null;
 let panelResizeState = null;
+let trackHeightState = null;
 let previewSignature = '';
 let contextMenuClipId = null;
 let suppressTimelineClick = false;
@@ -798,6 +851,63 @@ function closeEditorNameDialog(value = null) {
     resolve(value);
   }
 }
+
+let editorTooltipState = null;
+
+function initEditorTooltips() {
+  const tooltip = document.createElement('div');
+  tooltip.className = 'editor-tooltip';
+  tooltip.hidden = true;
+  document.body.appendChild(tooltip);
+
+  const hide = () => {
+    if (!editorTooltipState) return;
+    const {target, title} = editorTooltipState;
+    if (target && title) target.setAttribute('title', title);
+    tooltip.hidden = true;
+    editorTooltipState = null;
+  };
+
+  const show = target => {
+    if (!target) return;
+    const title = target.getAttribute('title');
+    if (!title) return;
+    if (editorTooltipState?.target === target && !tooltip.hidden) return;
+    hide();
+    editorTooltipState = {target, title};
+    target.dataset.tooltipTitle = title;
+    target.removeAttribute('title');
+    tooltip.textContent = title;
+    tooltip.hidden = false;
+    position();
+  };
+
+  const position = () => {
+    if (!editorTooltipState || tooltip.hidden) return;
+    const rect = editorTooltipState.target.getBoundingClientRect();
+    const top = Math.max(8, rect.top - 36);
+    const left = Math.max(8, Math.min(window.innerWidth - tooltip.offsetWidth - 8, rect.left + rect.width / 2 - tooltip.offsetWidth / 2));
+    tooltip.style.top = `${top}px`;
+    tooltip.style.left = `${left}px`;
+  };
+
+  document.addEventListener('pointerover', event => {
+    const target = event.target.closest('[title]');
+    if (!target) return;
+    show(target);
+  }, true);
+  document.addEventListener('pointermove', position, true);
+  document.addEventListener('pointerout', event => {
+    if (!editorTooltipState) return;
+    if (!event.relatedTarget || !event.relatedTarget.closest?.('[title]')) hide();
+  }, true);
+  document.addEventListener('scroll', hide, true);
+  window.addEventListener('blur', hide);
+  document.addEventListener('keydown', hide, true);
+}
+
+initEditorTooltips();
+
 let exportPollTimer = null;
 let mediaRecorder = null;
 let recordingChunks = [];
@@ -806,6 +916,10 @@ let linkedSelectionEnabled = true;
 let rippleInsertEnabled = false;
 let showEmptyTimelineTracks = true;
 let previewOriginalScale = false;
+let transitionPointerDragState = null;
+let suppressTransitionClick = false;
+const PREVIEW_VIDEO_SEEK_TOLERANCE = 0.08;
+const PREVIEW_AUDIO_SEEK_TOLERANCE = 0.35;
 
 function apiPost(url, data = {}) {
   const body = new FormData();
@@ -982,6 +1096,29 @@ const transitionPresets = {
   circleopen: {transition: 'circleopen', transition_duration: 0.65}
 };
 
+const remotionEffectPresets = {
+  {% for item in remotion_editor_assets.effects %}
+  "{{ item.preset_key }}": {{ item.params | tojson }}{% if not loop.last %},{% endif %}
+  {% endfor %}
+};
+const remotionTransitionPresets = {
+  {% for item in remotion_editor_assets.transitions %}
+  "{{ item.preset_key }}": {{ item.params | tojson }}{% if not loop.last %},{% endif %}
+  {% endfor %}
+};
+const customEffectAssets = {
+  {% for item in custom_editor_assets.effects %}
+  "{{ item.preset_key }}": {{ item | tojson }}{% if not loop.last %},{% endif %}
+  {% endfor %}
+};
+const customTransitionAssets = {
+  {% for item in custom_editor_assets.transitions %}
+  "{{ item.preset_key }}": {{ item | tojson }}{% if not loop.last %},{% endif %}
+  {% endfor %}
+};
+Object.assign(effectPresets, remotionEffectPresets);
+Object.assign(transitionPresets, remotionTransitionPresets);
+
 function projectCanvas() {
   return projectData.canvas || {width: 1080, height: 1920, fps: 30};
 }
@@ -1033,12 +1170,28 @@ function timelineDuration() {
   return Math.max(30, projectData.duration || 30);
 }
 
+function timelineHeadWidth() {
+  const board = document.getElementById('timeline');
+  const value = board ? getComputedStyle(board).getPropertyValue('--timeline-head-width') : '';
+  return Number.parseFloat(value) || 172;
+}
+
+function timelineViewportWidth() {
+  const board = document.getElementById('timeline');
+  if (!board) return 960;
+  return Math.max(360, board.clientWidth - timelineHeadWidth());
+}
+
+function fitPixelsPerSecond() {
+  return Math.max(1.2, (timelineViewportWidth() - 8) / timelineDuration());
+}
+
 function pixelsPerSecond() {
-  return 24 + timelineZoom * 1.65;
+  return fitPixelsPerSecond() * Math.pow(2, (timelineZoom - 50) / 22);
 }
 
 function timelineLaneWidth() {
-  return Math.max(960, Math.round(timelineDuration() * pixelsPerSecond()));
+  return Math.max(timelineViewportWidth(), Math.round(timelineDuration() * pixelsPerSecond()));
 }
 
 function rulerStep() {
@@ -1047,7 +1200,8 @@ function rulerStep() {
   if (pps >= 90) return 1;
   if (pps >= 52) return 2;
   if (pps >= 34) return 5;
-  return 10;
+  if (pps >= 12) return 10;
+  return 30;
 }
 
 function formatTimecode(seconds) {
@@ -1061,9 +1215,10 @@ function formatTimecode(seconds) {
   return `${hh}:${mm}:${ss}:${String(frames).padStart(2, '0')}`;
 }
 
-function snapTime(time) {
+function snapTime(time, includePlayhead = true) {
   if (!snapEnabled) return Math.round(time * 10) / 10;
-  const marks = [0, playheadTime];
+  const marks = [0];
+  if (includePlayhead) marks.push(playheadTime);
   allClips().forEach(clip => {
     marks.push(clip.start_time);
     marks.push(clip.start_time + clip.duration);
@@ -1114,6 +1269,16 @@ function timeFromLanePoint(clientX, laneLike) {
   const scrollLeft = laneLike.scrollLeft || document.getElementById('timeline').scrollLeft || 0;
   const ratio = Math.max(0, Math.min(1, (clientX - rect.left + scrollLeft) / timelineLaneWidth()));
   return snapTime(ratio * duration);
+}
+
+function timeFromTimelineClientX(clientX, snap = true) {
+  const board = document.getElementById('timeline');
+  const anchor = document.querySelector('#timeline .timeline-lane') || document.querySelector('#timelineRuler .ruler-scroll');
+  if (!board || !anchor) return playheadTime;
+  const rect = anchor.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left + board.scrollLeft) / timelineLaneWidth()));
+  const raw = ratio * timelineDuration();
+  return snap ? snapTime(raw, false) : Math.round(raw * 1000) / 1000;
 }
 
 function timeDeltaFromPixels(deltaX) {
@@ -1266,7 +1431,13 @@ function renderRuler() {
     <div class="ruler-head">时间</div>
     <div class="ruler-scroll"><div class="ruler-marks" style="width:${width}px">${marks.join('')}${markerHtml.join('')}</div></div>
   `;
-  ruler.querySelector('.ruler-scroll').addEventListener('click', event => {
+  const rulerScroll = ruler.querySelector('.ruler-scroll');
+  bindRulerScrollInteractions(rulerScroll);
+  rulerScroll.addEventListener('click', event => {
+    if (rulerScroll.dataset.suppressClick === '1') {
+      delete rulerScroll.dataset.suppressClick;
+      return;
+    }
     setPlayhead(timeFromLanePoint(event.clientX, event.currentTarget));
   });
   ruler.querySelectorAll('.ruler-marker').forEach(marker => {
@@ -1291,9 +1462,97 @@ function syncRulerScroll() {
   if (board && marks) marks.style.transform = `translateX(${-board.scrollLeft}px)`;
 }
 
+function scrollTimelineBy(deltaX) {
+  const board = document.getElementById('timeline');
+  if (!board || !Number.isFinite(deltaX)) return;
+  board.scrollLeft = Math.max(0, Math.min(board.scrollWidth - board.clientWidth, board.scrollLeft + deltaX));
+  syncRulerScroll();
+  updatePlayhead();
+}
+
+function bindRulerScrollInteractions(rulerScroll) {
+  if (!rulerScroll) return;
+  let panState = null;
+  rulerScroll.addEventListener('wheel', event => {
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (!delta) return;
+    event.preventDefault();
+    scrollTimelineBy(delta);
+  }, {passive: false});
+  rulerScroll.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.target.closest('.ruler-marker')) return;
+    if (!event.shiftKey && !event.altKey) {
+      beginPlayheadScrub(event, 'ruler');
+      return;
+    }
+    const board = document.getElementById('timeline');
+    if (!board) return;
+    panState = {x: event.clientX, scrollLeft: board.scrollLeft, moved: false};
+    rulerScroll.classList.add('is-panning');
+    rulerScroll.setPointerCapture?.(event.pointerId);
+  });
+  rulerScroll.addEventListener('pointermove', event => {
+    if (!panState) return;
+    const dx = event.clientX - panState.x;
+    if (Math.abs(dx) > 2) panState.moved = true;
+    const board = document.getElementById('timeline');
+    if (!board) return;
+    board.scrollLeft = Math.max(0, Math.min(board.scrollWidth - board.clientWidth, panState.scrollLeft - dx));
+    syncRulerScroll();
+    updatePlayhead();
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => {
+    rulerScroll.addEventListener(type, () => {
+      if (panState?.moved) rulerScroll.dataset.suppressClick = '1';
+      panState = null;
+      rulerScroll.classList.remove('is-panning');
+    });
+  });
+}
+
+function beginPlayheadScrub(event, source = 'playhead') {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  hideClipContextMenu();
+  if (isPlaying) stopPlayback();
+  const target = source === 'playhead' ? document.getElementById('playhead') : document.getElementById('timelineRuler');
+  playheadScrubState = {
+    source,
+    pointerId: event.pointerId,
+    moved: false,
+    startX: event.clientX,
+    target,
+  };
+  target?.classList.add('is-scrubbing');
+  document.body.classList.add('is-playhead-scrubbing');
+  target?.setPointerCapture?.(event.pointerId);
+  setPlayhead(timeFromTimelineClientX(event.clientX, true), false);
+}
+
+function updatePlayheadScrub(event) {
+  if (!playheadScrubState) return;
+  event.preventDefault();
+  if (Math.abs(event.clientX - playheadScrubState.startX) > 2) playheadScrubState.moved = true;
+  setPlayhead(timeFromTimelineClientX(event.clientX, true), false);
+}
+
+function finishPlayheadScrub(event) {
+  if (!playheadScrubState) return;
+  event?.preventDefault?.();
+  const state = playheadScrubState;
+  playheadScrubState = null;
+  state.target?.classList.remove('is-scrubbing');
+  document.body.classList.remove('is-playhead-scrubbing');
+  const rulerScroll = document.querySelector('#timelineRuler .ruler-scroll');
+  if (state.source === 'ruler' && state.moved && rulerScroll) rulerScroll.dataset.suppressClick = '1';
+  renderTimelineCompositePreview();
+}
+
 function renderPreview(asset) {
   const pane = document.getElementById('previewPane');
   document.getElementById('selectedAssetName').textContent = asset ? asset.name : '未选择素材';
+  stopPreviewMedia(pane);
   if (!asset || !asset.url) {
     pane.innerHTML = '<span class="text-sm font-bold text-slate-600">选择素材或时间线片段后预览</span>';
     return;
@@ -1335,6 +1594,7 @@ function renderTextPreview(clip) {
   const params = clip.params || {};
   const pane = document.getElementById('previewPane');
   document.getElementById('selectedAssetName').textContent = clip.name || '文字片段';
+  stopPreviewMedia(pane);
   pane.innerHTML = '';
   const stage = document.createElement('div');
   stage.className = 'jy-preview-stage is-text';
@@ -1379,22 +1639,36 @@ function activeClipsAt(time) {
   }).sort((a, b) => (a.track.sort_order || 0) - (b.track.sort_order || 0) || (a.clip.z_index || 0) - (b.clip.z_index || 0));
 }
 
-function activeVisualSignature(time = playheadTime) {
+function activePreviewSignature(time = playheadTime) {
   return activeClipsAt(time)
-    .filter(({clip}) => ['video', 'image', 'text'].includes(clip.clip_type))
-    .map(({clip, track}) => `${track.id}:${clip.id}:${clip.start_time}:${clip.duration}`)
+    .filter(({clip}) => ['video', 'image', 'text', 'audio', 'sfx'].includes(clip.clip_type))
+    .map(({clip, track}) => `${track.id}:${clip.id}:${clip.start_time}:${clip.duration}:${clip.params?.audio_enabled}`)
     .join('|');
+}
+
+function activeVisualSignature(time = playheadTime) {
+  return activePreviewSignature(time);
 }
 
 function firstVisibleClipTime() {
   const clips = allClips()
-    .filter(clip => clipEnabled(clip) && ['video', 'image', 'text'].includes(clip.clip_type))
+    .filter(clip => clipEnabled(clip) && ['video', 'image', 'text', 'audio', 'sfx'].includes(clip.clip_type))
     .sort((a, b) => Number(a.start_time || 0) - Number(b.start_time || 0));
   return clips.length ? Math.max(0, Number(clips[0].start_time || 0)) : 0;
 }
 
 function clipEnabled(clip) {
   return (clip.params || {}).enabled !== false;
+}
+
+function clipPreviewVolume(clip) {
+  const params = clip.params || {};
+  if (params.audio_enabled === false) return 0;
+  const base = Number(params.volume ?? 1);
+  const start = Number(params.volume_start ?? base);
+  const end = Number(params.volume_end ?? base);
+  const progress = clamp((playheadTime - Number(clip.start_time || 0)) / Math.max(0.001, Number(clip.duration || 0.001)), 0, 1);
+  return clamp(start + (end - start) * progress, 0, 1);
 }
 
 function createPreviewMedia(clip, fillStage = false) {
@@ -1424,13 +1698,42 @@ function createPreviewMedia(clip, fillStage = false) {
   return media;
 }
 
-function syncVideoElementToPlayhead(video, clip) {
+function createPreviewAudioProxy(clip) {
+  const asset = clip.asset;
+  if (!asset?.url || clipPreviewVolume(clip) <= 0) return null;
+  const audio = document.createElement('audio');
+  audio.className = 'preview-audio-proxy';
+  audio.dataset.clipId = clip.id;
+  audio.src = asset.url;
+  audio.preload = 'auto';
+  audio.playsInline = true;
+  audio.volume = clipPreviewVolume(clip);
+  audio.playbackRate = Number((clip.params || {}).speed || 1);
+  const syncFrame = () => {
+    syncMediaElementToPlayhead(audio, clip);
+    audio.volume = clipPreviewVolume(clip);
+    if (isPlaying) audio.play().catch(() => {});
+  };
+  audio.addEventListener('loadedmetadata', syncFrame, {once: true});
+  audio.addEventListener('canplay', syncFrame, {once: true});
+  if (audio.readyState >= 1) syncFrame();
+  return audio;
+}
+
+function syncMediaElementToPlayhead(media, clip, force = false) {
   const params = clip.params || {};
   const speed = Number(params.speed || 1);
   const offset = Math.max(0, (playheadTime - clip.start_time) * speed + (clip.source_start || 0));
-  if (!Number.isFinite(video.duration)) return;
-  const nextTime = Math.min(Math.max(0, offset), Math.max(0, video.duration - 0.05));
-  if (Math.abs(video.currentTime - nextTime) > 0.05) video.currentTime = nextTime;
+  if (!Number.isFinite(media.duration)) return;
+  const nextTime = Math.min(Math.max(0, offset), Math.max(0, media.duration - 0.05));
+  const tolerance = media.tagName === 'AUDIO' ? PREVIEW_AUDIO_SEEK_TOLERANCE : PREVIEW_VIDEO_SEEK_TOLERANCE;
+  if (force || !isPlaying || Math.abs(media.currentTime - nextTime) > tolerance) {
+    media.currentTime = nextTime;
+  }
+}
+
+function syncVideoElementToPlayhead(video, clip) {
+  syncMediaElementToPlayhead(video, clip, !isPlaying);
 }
 
 function positionPreviewLayer(layer, clip) {
@@ -1727,7 +2030,8 @@ function renderTimelineCompositePreview() {
   const pane = document.getElementById('previewPane');
   const active = activeClipsAt(playheadTime);
   const visual = active.filter(({clip}) => ['video', 'image', 'text'].includes(clip.clip_type));
-  previewSignature = activeVisualSignature(playheadTime);
+  previewSignature = activePreviewSignature(playheadTime);
+  stopPreviewMedia(pane);
   pane.innerHTML = '';
   const stage = document.createElement('div');
   stage.className = 'jy-preview-stage is-composite';
@@ -1736,9 +2040,6 @@ function renderTimelineCompositePreview() {
     empty.className = 'jy-preview-empty';
     empty.textContent = '当前时间点没有可见画面';
     stage.appendChild(empty);
-    pane.appendChild(stage);
-    resizePreviewStage();
-    return;
   }
 
   const main = visual.find(({track, clip}) => track.track_type === 'video' && ['video', 'image'].includes(clip.clip_type))
@@ -1755,6 +2056,14 @@ function renderTimelineCompositePreview() {
     }
   }
 
+  const audible = [];
+  if (main?.clip && main.clip.clip_type === 'video' && clipPreviewVolume(main.clip) > 0) audible.push(main);
+  active.forEach(({track, clip}) => {
+    if (!['audio', 'sfx'].includes(clip.clip_type)) return;
+    if (clipPreviewVolume(clip) <= 0) return;
+    if (track.track_type !== 'audio' && track.track_type !== 'sfx') return;
+    audible.push({track, clip});
+  });
   visual.forEach(({clip, track}) => {
     if (main?.clip.id === clip.id) return;
     const layer = document.createElement('div');
@@ -1784,12 +2093,30 @@ function renderTimelineCompositePreview() {
     rotateHandle.className = 'preview-rotate-handle';
     rotateHandle.addEventListener('mousedown', event => beginPreviewRotate(event, layer, clip));
     layer.appendChild(rotateHandle);
-    stage.appendChild(layer);
+  stage.appendChild(layer);
+  });
+
+  audible.forEach(({clip}) => {
+    const proxy = createPreviewAudioProxy(clip);
+    if (proxy) stage.appendChild(proxy);
   });
 
   pane.appendChild(stage);
   resizePreviewStage();
-  syncPreviewVideos();
+  syncPreviewMedia();
+}
+
+function stopPreviewMedia(pane = document.getElementById('previewPane')) {
+  if (!pane) return;
+  pane.querySelectorAll('video, audio').forEach(media => {
+    try {
+      media.pause();
+      media.removeAttribute('src');
+      media.load?.();
+    } catch (_error) {
+      // ignore
+    }
+  });
 }
 
 function selectClip(clip, options = {}) {
@@ -2254,6 +2581,10 @@ function finishTimelineSelection() {
 }
 
 function beginTrackReorderDrag(event, track, row) {
+  if (event.target.closest('.track-height-resize-handle')) {
+    event.preventDefault();
+    return;
+  }
   if (!event.target.closest('.track-drag-handle')) {
     event.preventDefault();
     return;
@@ -2310,6 +2641,63 @@ function clearTrackReorderDrag() {
   });
 }
 
+function beginTrackHeightResize(event, track, row) {
+  if (event.button !== 0) return;
+  if (!track || track.locked) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const currentHeight = parseFloat(row.style.getPropertyValue('--track-height')) || row.getBoundingClientRect().height || 46;
+  trackHeightState = {
+    trackId: Number(track.id),
+    row,
+    startY: event.clientY,
+    startHeight: currentHeight
+  };
+  row.classList.add('is-height-resizing');
+  document.body.classList.add('is-track-resizing');
+}
+
+function updateTrackHeightResize(event) {
+  if (!trackHeightState) return;
+  const delta = event.clientY - trackHeightState.startY;
+  const next = clamp(trackHeightState.startHeight + delta, 28, 140);
+  trackHeightState.row.style.setProperty('--track-height', `${next}px`);
+  trackHeightState.row.classList.toggle('is-collapsed', next <= 32);
+}
+
+async function finishTrackHeightResize() {
+  if (!trackHeightState) return;
+  const state = trackHeightState;
+  trackHeightState = null;
+  state.row.classList.remove('is-height-resizing');
+  document.body.classList.remove('is-track-resizing');
+  const height = parseFloat(state.row.style.getPropertyValue('--track-height')) || state.startHeight;
+  const collapsed = height <= 32;
+  try {
+    const result = await apiPost(`/api/editor/track/${state.trackId}/view`, {
+      height: Math.round(height),
+      collapsed: collapsed ? 'true' : 'false'
+    });
+    applyProjectResponse(result);
+  } catch (error) {
+    console.warn('轨道高度保存失败', error);
+    await refreshProject();
+  }
+}
+
+async function toggleTrackCollapse(track) {
+  if (!track || track.locked) return;
+  const nextCollapsed = !track.ui_collapsed;
+  const nextHeight = nextCollapsed
+    ? Math.max(34, Number(track.ui_height || track.ui_expanded_height || 46))
+    : Math.max(34, Number(track.ui_expanded_height || 46));
+  const result = await apiPost(`/api/editor/track/${track.id}/view`, {
+    collapsed: nextCollapsed ? 'true' : 'false',
+    height: nextHeight
+  });
+  applyProjectResponse(result);
+}
+
 function visibleTimelineTracks() {
   const tracks = [...(projectData.tracks || [])].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || a.id - b.id);
   if (showEmptyTimelineTracks || assetPointerDragState?.active || timelineDragState) return tracks;
@@ -2317,6 +2705,11 @@ function visibleTimelineTracks() {
   if (visible.length) return visible;
   const primary = tracks.find(track => track.track_type === 'video') || tracks[0];
   return primary ? [primary] : [];
+}
+
+function isMainTimelineTrack(track) {
+  const tracks = [...(projectData.tracks || [])].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || a.id - b.id);
+  return Boolean(track && track.track_type === 'video' && tracks.find(item => item.track_type === 'video')?.id === track.id);
 }
 
 function renderTimeline() {
@@ -2334,21 +2727,29 @@ function renderTimeline() {
     row.className = 'timeline-track';
     row.dataset.trackId = track.id;
     row.draggable = true;
+    row.style.setProperty('--track-height', `${Math.max(28, Number(track.ui_height || 46))}px`);
     row.classList.toggle('is-locked', track.locked);
     row.classList.toggle('is-muted', track.muted);
     row.classList.toggle('is-empty', !(track.clips || []).length);
+    row.classList.toggle('is-collapsed', Boolean(track.ui_collapsed));
+    row.classList.toggle('is-main-track', isMainTimelineTrack(track));
     row.innerHTML = `
       <div class="timeline-track-head">
         <button class="track-drag-handle" type="button" title="上下拖动轨道"><i data-lucide="grip-vertical"></i></button>
-        <span class="track-kind" title="${track.name}">${trackIconLabel(track.track_type)}</span>
+        <span class="track-kind ${isMainTimelineTrack(track) ? 'is-main-track' : ''}" title="${isMainTimelineTrack(track) ? '主轨道（封面）：承载基础画面' : track.name}">${trackIconLabel(track.track_type)}</span>
         <button class="track-toggle" data-field="muted" title="静音"><i data-lucide="${track.muted ? 'volume-x' : 'volume-2'}"></i></button>
         <button class="track-toggle" data-field="locked" title="锁定"><i data-lucide="${track.locked ? 'lock' : 'unlock'}"></i></button>
+        <button class="track-toggle" data-action="collapse" title="${track.ui_collapsed ? '展开轨道' : '收起轨道'}"><i data-lucide="${track.ui_collapsed ? 'chevrons-down' : 'chevrons-up'}"></i></button>
         ${track.track_type === 'text' ? '<button class="track-action" data-action="add-text" title="在播放头添加字幕"><i data-lucide="type"></i></button>' : ''}
         <button class="track-action" data-action="compact" title="整理轨道空隙"><i data-lucide="move-left"></i></button>
         <button class="track-action" data-action="rename" title="重命名轨道"><i data-lucide="pencil"></i></button>
         <button class="track-action track-danger" data-action="delete" title="删除轨道"><i data-lucide="trash-2"></i></button>
       </div>
       <div class="timeline-lane" data-track-id="${track.id}" data-track-type="${track.track_type}"></div>`;
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'track-height-resize-handle';
+    resizeHandle.title = '拖动调整轨道高度';
+    row.appendChild(resizeHandle);
     const lane = row.querySelector('.timeline-lane');
     row.addEventListener('dragstart', event => beginTrackReorderDrag(event, track, row));
     row.addEventListener('dragover', event => updateTrackReorderDrag(event, row));
@@ -2389,6 +2790,19 @@ function renderTimeline() {
         waveform.className = 'clip-waveform';
         const waveformUrl = clip.asset?.waveform_url || clip.asset?.preview_url || '';
         if (waveformUrl) waveform.style.backgroundImage = `url("${waveformUrl}")`;
+        item.append(waveform);
+      }
+      if (['video', 'image'].includes(clip.clip_type)) {
+        const thumb = document.createElement('span');
+        thumb.className = 'clip-thumb';
+        const thumbUrl = clip.asset?.preview_url || clip.asset?.url || '';
+        if (thumbUrl) thumb.style.backgroundImage = `url("${thumbUrl}")`;
+        item.append(thumb);
+      }
+      if (clip.clip_type === 'video' && clip.asset?.waveform_url) {
+        const waveform = document.createElement('span');
+        waveform.className = 'clip-waveform clip-waveform-video';
+        waveform.style.backgroundImage = `url("${clip.asset.waveform_url}")`;
         item.append(waveform);
       }
       if (Array.isArray(clip.params?.keyframes)) {
@@ -2443,13 +2857,14 @@ function renderTimeline() {
     });
     lane.addEventListener('dragover', event => {
       event.preventDefault();
-      if (draggedAsset && !compatibleTrack(track, draggedAsset)) {
+      const draggedAssetList = draggedAssets.length ? draggedAssets : (draggedAsset ? [draggedAsset] : []);
+      if (draggedAssetList.length && !draggedAssetList.some(asset => compatibleTrack(track, asset))) {
         lane.classList.add('is-drop-blocked');
         event.dataTransfer.dropEffect = 'none';
         return;
       }
       if (!track.locked) lane.classList.add('is-drop-target');
-      event.dataTransfer.dropEffect = draggedAsset ? 'copy' : 'move';
+      event.dataTransfer.dropEffect = draggedAssetList.length ? 'copy' : 'move';
     });
     lane.addEventListener('dragleave', () => lane.classList.remove('is-drop-target', 'is-drop-blocked'));
     lane.addEventListener('drop', async event => {
@@ -2457,13 +2872,15 @@ function renderTimeline() {
       lane.classList.remove('is-drop-target', 'is-drop-blocked');
       if (track.locked) return;
       const start = dropTime(event, lane, duration);
-      if (draggedAsset && compatibleTrack(track, draggedAsset)) {
-        await addAssetToTrack(track, draggedAsset, start);
+      const draggedAssetList = draggedAssets.length ? draggedAssets : (draggedAsset ? [draggedAsset] : []);
+      if (draggedAssetList.length) {
+        await addAssetsToTimeline(track, draggedAssetList, start);
       } else if (draggedClip && !isClipLocked(draggedClip)) {
         await moveClipToTime(draggedClip, start);
         await refreshProject();
       }
       draggedAsset = null;
+      draggedAssets = [];
       draggedClip = null;
     });
     lane.addEventListener('dblclick', async event => {
@@ -2487,10 +2904,15 @@ function renderTimeline() {
     });
     row.querySelectorAll('.track-toggle').forEach(button => {
       button.addEventListener('click', async () => {
+        if (button.dataset.action === 'collapse') {
+          await toggleTrackCollapse(track);
+          return;
+        }
         await apiPost(`/api/editor/track/${track.id}/toggle`, {field: button.dataset.field});
         await refreshProject();
       });
     });
+    resizeHandle.addEventListener('mousedown', event => beginTrackHeightResize(event, track, row));
     row.querySelector('[data-action="rename"]')?.addEventListener('click', async event => {
       event.stopPropagation();
       await renameTrack(track);
@@ -2617,12 +3039,18 @@ async function updateClipFromState(clip, overrides = {}) {
     animation_in_duration: overrides.animation_in_duration ?? params.animation_in_duration ?? 0.4,
     animation_out: overrides.animation_out ?? params.animation_out ?? 'none',
     animation_out_duration: overrides.animation_out_duration ?? params.animation_out_duration ?? 0.4,
+    remotion_template_id: overrides.remotion_template_id ?? params.remotion_template_id ?? '',
+    remotion_asset_group: overrides.remotion_asset_group ?? params.remotion_asset_group ?? '',
+    remotion_asset_key: overrides.remotion_asset_key ?? params.remotion_asset_key ?? '',
+    remotion_asset_name: overrides.remotion_asset_name ?? params.remotion_asset_name ?? '',
+    remotion_clear_group: overrides.remotion_clear_group ?? '',
     ripple_trim: overrides.ripple_trim ?? ''
   });
 }
 
 function recommendedTrackType(asset) {
   if (!asset) return 'overlay';
+  if (asset.preferred_track_type) return asset.preferred_track_type;
   if (asset.asset_type === 'video') return 'video';
   if (asset.asset_type === 'audio') return 'audio';
   if (asset.asset_type === 'sfx') return 'sfx';
@@ -2637,6 +3065,20 @@ function compatibleTrack(track, asset) {
   return false;
 }
 
+function targetTrackForAsset(baseTrack, asset) {
+  if (!asset) return null;
+  if (asset.preferred_track_type) {
+    const preferred = projectData.tracks.find(item =>
+      item.track_type === asset.preferred_track_type && !item.locked && compatibleTrack(item, asset)
+    );
+    if (preferred) return preferred;
+  }
+  if (baseTrack && !baseTrack.locked && compatibleTrack(baseTrack, asset)) return baseTrack;
+  return projectData.tracks.find(item => item.track_type === recommendedTrackType(asset) && !item.locked && compatibleTrack(item, asset))
+    || projectData.tracks.find(item => !item.locked && compatibleTrack(item, asset))
+    || null;
+}
+
 function compatibleTrackForClip(track, clip) {
   if (['video', 'image'].includes(clip.clip_type)) return ['video', 'overlay'].includes(track.track_type);
   if (clip.clip_type === 'text') return track.track_type === 'text';
@@ -2646,6 +3088,19 @@ function compatibleTrackForClip(track, clip) {
 
 function clipTypeForAsset(asset) {
   return asset?.asset_type === 'sfx' ? 'audio' : asset?.asset_type;
+}
+
+function defaultAssetDuration(asset) {
+  const mediaDuration = Number(asset?.duration || asset?.source_duration || 0);
+  if (mediaDuration > 0 && ['video', 'audio', 'sfx'].includes(asset?.asset_type)) return Math.max(0.2, mediaDuration);
+  return asset?.asset_type === 'sfx' ? 1.2 : asset?.asset_type === 'image' ? 5 : asset?.asset_type === 'audio' ? 8 : 6;
+}
+
+function timelineInsertStart(track) {
+  const clips = Array.isArray(track?.clips) ? track.clips : [];
+  if (!clips.length) return 0;
+  const end = clips.reduce((max, clip) => Math.max(max, Number(clip.start_time || 0) + Number(clip.duration || 0)), 0);
+  return Math.max(0, Number(end.toFixed(3)));
 }
 
 function canReplaceClipWithAsset(clip, asset) {
@@ -2660,21 +3115,165 @@ function canReplaceClipWithAsset(clip, asset) {
 
 async function addAssetToTrack(track, asset, startTime, durationOverride = null) {
   if (track.locked) return;
-  const target = compatibleTrack(track, asset)
-    ? track
-    : projectData.tracks.find(item => item.track_type === recommendedTrackType(asset)) || track;
+  const target = targetTrackForAsset(track, asset) || track;
   if (target.locked) return;
-  const defaultDuration = asset.asset_type === 'sfx' ? 1.2 : asset.asset_type === 'image' ? 5 : asset.asset_type === 'audio' ? 8 : 6;
+  const defaultDuration = defaultAssetDuration(asset);
+  const insertStart = startTime === undefined || startTime === null
+    ? timelineInsertStart(target)
+    : Number(startTime);
   const result = await apiPost(`/api/editor/project/${projectId}/clip`, {
     track_id: target.id,
     asset_id: asset.id,
-    start_time: startTime,
+    start_time: insertStart,
     duration: durationOverride || defaultDuration,
     ripple_insert: rippleInsertEnabled ? 'true' : ''
   });
   selectedClipId = result.clip_id || null;
-  setPlayhead(startTime, false);
+  setPlayhead(insertStart, false);
   applyProjectResponse(result);
+}
+
+async function addAssetsToTimeline(track, assets, startTime) {
+  const list = Array.from(assets || []).filter(Boolean);
+  if (!list.length || !track || track.locked) return false;
+  let cursorByTrack = new Map();
+  let changed = false;
+  for (const asset of list) {
+    const target = targetTrackForAsset(track, asset);
+    if (!target || target.locked || !compatibleTrack(target, asset)) continue;
+    const cursor = cursorByTrack.has(target.id)
+      ? cursorByTrack.get(target.id)
+      : (startTime === undefined || startTime === null ? timelineInsertStart(target) : Number(startTime));
+    await addAssetToTrack(target, asset, cursor);
+    cursorByTrack.set(target.id, cursor + defaultAssetDuration(asset));
+    changed = true;
+  }
+  return changed;
+}
+
+function findTrackForClip(clipId) {
+  const id = Number(clipId);
+  return projectData.tracks.find(track => (track.clips || []).some(clip => Number(clip.id) === id)) || null;
+}
+
+function transitionPresetLabel(key, button = null) {
+  return button?.querySelector('b')?.textContent?.trim() || key || '转场';
+}
+
+function isVisualClip(clip) {
+  return Boolean(clip) && ['video', 'image'].includes(clip.clip_type);
+}
+
+function clipsForTransitionTrack(track) {
+  return Array.isArray(track?.clips)
+    ? track.clips.filter(isVisualClip).sort((a, b) => Number(a.start_time || 0) - Number(b.start_time || 0))
+    : [];
+}
+
+function transitionTargetClipForDrop(track, clientX, clientY, lane) {
+  const directElement = document.elementFromPoint(clientX, clientY)?.closest?.('.timeline-clip');
+  if (directElement) {
+    const directClip = (track.clips || []).find(clip => Number(clip.id) === Number(directElement.dataset.clipId));
+    if (isVisualClip(directClip)) return directClip;
+  }
+  const clips = clipsForTransitionTrack(track);
+  if (!clips.length) return null;
+  const time = timeFromLanePoint(clientX, lane);
+  const containing = clips.find(clip => {
+    const start = Number(clip.start_time || 0);
+    return time >= start && time <= start + Number(clip.duration || 0);
+  });
+  if (containing) return containing;
+  return clips.find(clip => Number(clip.start_time || 0) >= time) || clips.at(-1) || null;
+}
+
+async function applyTransitionPresetToClip(key, clip) {
+  const preset = transitionPresets[key];
+  if (!preset || !clip || isClipLocked(clip)) return false;
+  document.getElementById('clipTransition').value = preset.transition;
+  document.getElementById('clipTransitionDuration').value = preset.transition_duration;
+  const payload = {...preset};
+  if (!payload.remotion_asset_key && clip.params?.remotion_asset_group === 'transition') {
+    payload.remotion_clear_group = 'transition';
+  }
+  await updateClipFromState(clip, payload);
+  return true;
+}
+
+function clearTransitionDropHints() {
+  document.querySelectorAll('.timeline-lane.is-drop-target, .timeline-lane.is-drop-blocked, .timeline-clip.is-transition-drop-target').forEach(node => {
+    node.classList.remove('is-drop-target', 'is-drop-blocked', 'is-transition-drop-target');
+  });
+}
+
+function beginTransitionPointerDrag(event, button) {
+  if (event.button !== undefined && event.button !== 0) return;
+  const key = button.dataset.transition;
+  if (!key || !transitionPresets[key]) return;
+  event.preventDefault();
+  transitionPointerDragState = {
+    key,
+    label: transitionPresetLabel(key, button),
+    item: button,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false
+  };
+  button.setPointerCapture?.(event.pointerId);
+}
+
+function updateTransitionPointerDrag(event) {
+  const state = transitionPointerDragState;
+  if (!state) return;
+  const movement = Math.hypot(event.clientX - state.startX, event.clientY - state.startY);
+  if (!state.active && movement < 6) return;
+  event.preventDefault();
+  if (!state.active) {
+    state.active = true;
+    createTransitionDragGhost(state);
+  }
+  document.body.classList.add('is-transition-dragging');
+  moveAssetDragGhost(event.clientX, event.clientY);
+  clearTransitionDropHints();
+  const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.timeline-lane');
+  if (!lane) return;
+  const track = findTrackById(lane.dataset.trackId);
+  if (!track || track.locked) {
+    lane.classList.add('is-drop-blocked');
+    return;
+  }
+  const clip = transitionTargetClipForDrop(track, event.clientX, event.clientY, lane);
+  if (!clip) {
+    lane.classList.add('is-drop-blocked');
+    return;
+  }
+  lane.classList.add('is-drop-target');
+  timelineClipElement(clip.id)?.classList.add('is-transition-drop-target');
+}
+
+async function finishTransitionPointerDrag(event) {
+  const state = transitionPointerDragState;
+  transitionPointerDragState = null;
+  removeAssetDragGhost();
+  document.body.classList.remove('is-transition-dragging');
+  clearTransitionDropHints();
+  if (!state?.active) return;
+  suppressTransitionClick = true;
+  setTimeout(() => {
+    suppressTransitionClick = false;
+  }, 160);
+  const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.timeline-lane');
+  if (!lane) return;
+  const track = findTrackById(lane.dataset.trackId);
+  if (!track || track.locked) return;
+  const clip = transitionTargetClipForDrop(track, event.clientX, event.clientY, lane);
+  if (!clip) return;
+  const changed = await applyTransitionPresetToClip(state.key, clip);
+  if (!changed) return;
+  selectedClipId = clip.id;
+  selectedClipIds = new Set([Number(clip.id)]);
+  await refreshProject();
 }
 
 function beginAssetPointerDrag(event, item) {
@@ -2682,8 +3281,10 @@ function beginAssetPointerDrag(event, item) {
   if (event.target.closest('.asset-delete, .asset-add, .asset-replace')) return;
   event.preventDefault();
   const asset = JSON.parse(item.dataset.asset);
+  const assets = selectedAssetIds.has(Number(asset.id)) ? selectedAssetList() : [asset];
   assetPointerDragState = {
     asset,
+    assets,
     item,
     pointerId: event.pointerId,
     previousShowEmptyTracks: showEmptyTimelineTracks,
@@ -2713,6 +3314,7 @@ function updateAssetPointerDrag(event) {
     createAssetDragGhost(state);
   }
   draggedAsset = state.asset;
+  draggedAssets = state.assets?.length ? state.assets : [state.asset];
   document.body.classList.add('is-asset-dragging');
   moveAssetDragGhost(event.clientX, event.clientY);
   document.querySelectorAll('.timeline-lane.is-drop-target, .timeline-lane.is-drop-blocked').forEach(lane => {
@@ -2721,7 +3323,8 @@ function updateAssetPointerDrag(event) {
   const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.timeline-lane');
   if (lane) {
     const track = findTrackById(lane.dataset.trackId);
-    if (track && !track.locked && compatibleTrack(track, state.asset)) lane.classList.add('is-drop-target');
+    const canDrop = track && !track.locked && (state.assets || [state.asset]).some(asset => targetTrackForAsset(track, asset));
+    if (canDrop) lane.classList.add('is-drop-target');
     else if (track && !track.locked) lane.classList.add('is-drop-blocked');
   }
 }
@@ -2735,6 +3338,7 @@ async function finishAssetPointerDrag(event) {
     lane.classList.remove('is-drop-target', 'is-drop-blocked');
   });
   draggedAsset = null;
+  draggedAssets = [];
   if (!state?.active) return;
   suppressAssetClick = true;
   setTimeout(() => {
@@ -2744,10 +3348,8 @@ async function finishAssetPointerDrag(event) {
   const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.timeline-lane');
   if (lane) {
     const track = findTrackById(lane.dataset.trackId);
-    if (track && !track.locked && compatibleTrack(track, state.asset)) {
-      const start = dropTime({clientX: event.clientX}, lane, timelineDuration());
-      await addAssetToTrack(track, state.asset, start);
-      changed = true;
+    if (track && !track.locked) {
+      changed = await addAssetsToTimeline(track, state.assets || [state.asset], timeFromLanePoint(event.clientX, lane));
     }
   }
   if (!state.previousShowEmptyTracks) {
@@ -2762,7 +3364,16 @@ function createAssetDragGhost(state) {
   removeAssetDragGhost();
   assetDragGhost = document.createElement('div');
   assetDragGhost.className = 'asset-drag-ghost';
-  assetDragGhost.textContent = state.asset?.name || '素材';
+  const count = state.assets?.length || 1;
+  assetDragGhost.textContent = count > 1 ? `${count} 个素材` : (state.asset?.name || '素材');
+  document.body.appendChild(assetDragGhost);
+}
+
+function createTransitionDragGhost(state) {
+  removeAssetDragGhost();
+  assetDragGhost = document.createElement('div');
+  assetDragGhost.className = 'asset-drag-ghost transition-drag-ghost';
+  assetDragGhost.textContent = `${state.label || '转场'} · 拖到剪辑点`;
   document.body.appendChild(assetDragGhost);
 }
 
@@ -2886,20 +3497,96 @@ async function applyEffectPreset(key) {
   const preset = effectPresets[key];
   const clip = selectedClip || findClipById(selectedClipId);
   if (!preset || !clip || isClipLocked(clip)) return;
-  await updateClipFromState(clip, preset);
+  const payload = {...preset};
+  if (!payload.remotion_asset_key && clip.params?.remotion_asset_group === 'effect') {
+    payload.remotion_clear_group = 'effect';
+  }
+  await updateClipFromState(clip, payload);
   selectedClipId = clip.id;
   await refreshProject();
 }
 
 async function applyTransitionPreset(key) {
-  const preset = transitionPresets[key];
   const clip = selectedClip || findClipById(selectedClipId);
-  if (!preset || !clip || isClipLocked(clip)) return;
-  document.getElementById('clipTransition').value = preset.transition;
-  document.getElementById('clipTransitionDuration').value = preset.transition_duration;
-  await updateClipFromState(clip, preset);
+  const changed = await applyTransitionPresetToClip(key, clip);
+  if (!changed) return;
   selectedClipId = clip.id;
   await refreshProject();
+}
+
+async function clearClipEffect() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  document.getElementById('clipFilterPreset').value = 'none';
+  document.getElementById('clipContrast').value = 1;
+  document.getElementById('clipSaturation').value = 1;
+  document.getElementById('clipBrightness').value = 0;
+  document.getElementById('clipBlur').value = 0;
+  document.getElementById('clipSharpen').value = 0;
+  await updateClipFromState(clip, {
+    filter_preset: 'none',
+    contrast: 1,
+    saturation: 1,
+    brightness: 0,
+    blur: 0,
+    sharpen: 0,
+    motion_preset: 'none',
+    remotion_clear_group: 'effect'
+  });
+  selectedClipId = clip.id;
+  await refreshProject();
+}
+
+async function clearClipTransition() {
+  const clip = selectedClip || findClipById(selectedClipId);
+  if (!clip || isClipLocked(clip)) return;
+  document.getElementById('clipTransition').value = 'none';
+  document.getElementById('clipTransitionDuration').value = 0;
+  await updateClipFromState(clip, {
+    transition: 'none',
+    transition_duration: 0,
+    remotion_clear_group: 'transition'
+  });
+  selectedClipId = clip.id;
+  await refreshProject();
+}
+
+async function addCustomEffectAssetToTimeline(asset, group = 'effect') {
+  if (!asset || asset.usable === false) return;
+  const isAudio = ['audio', 'sfx'].includes(asset.asset_type);
+  const targetType = isAudio ? 'sfx' : 'overlay';
+  const target = projectData.tracks.find(item => item.track_type === targetType)
+    || projectData.tracks.find(item => compatibleTrack(item, asset));
+  if (!target || target.locked) return;
+  const canvas = projectCanvas();
+  const start = group === 'transition' && selectedClip
+    ? Math.max(0, Number(selectedClip.start_time || 0) - 0.25)
+    : Math.max(0, playheadTime);
+  const body = {
+    track_id: target.id,
+    asset_id: asset.id,
+    start_time: start,
+    duration: defaultAssetDuration(asset),
+    ripple_insert: '',
+  };
+  if (!isAudio) {
+    Object.assign(body, {
+      fit_mode: 'cover',
+      x: 0,
+      y: 0,
+      width: canvas.width || 1080,
+      opacity: 1,
+      overlay_blend_mode: asset.kind === 'video_overlay' ? 'screen' : 'normal',
+      animation_in: group === 'transition' ? 'fade' : 'none',
+      animation_in_duration: group === 'transition' ? 0.12 : 0,
+      animation_out: group === 'transition' ? 'fade' : 'none',
+      animation_out_duration: group === 'transition' ? 0.18 : 0,
+    });
+  }
+  const result = await apiPost(`/api/editor/project/${projectId}/clip`, body);
+  selectedClipId = result.clip_id || null;
+  setPlayhead(start, false);
+  applyProjectResponse(result);
 }
 
 async function refreshProject() {
@@ -3309,15 +3996,20 @@ function updatePlayerTime() {
   label.textContent = `${formatTimecode(playheadTime)} / ${formatTimecode(timelineDuration())}`;
 }
 
-function syncPreviewVideos() {
-  document.querySelectorAll('#previewPane video').forEach(video => {
+function syncPreviewMedia() {
+  document.querySelectorAll('#previewPane video[data-clip-id], #previewPane audio.preview-audio-proxy[data-clip-id]').forEach(video => {
     const layer = video.closest('[data-clip-id]');
     const clip = findClipById(video.dataset.clipId || layer?.dataset.clipId);
     if (!clip) return;
-    syncVideoElementToPlayhead(video, clip);
+    syncMediaElementToPlayhead(video, clip);
+    if (video.tagName === 'AUDIO') video.volume = clipPreviewVolume(clip);
     if (isPlaying) video.play().catch(() => {});
     else video.pause();
   });
+}
+
+function syncPreviewVideos() {
+  syncPreviewMedia();
 }
 
 function updatePlayButton() {
@@ -3367,7 +4059,16 @@ document.getElementById('timeline').addEventListener('scroll', () => {
   updatePlayhead();
   syncRulerScroll();
 });
+document.getElementById('timeline').addEventListener('wheel', event => {
+  if (!event.shiftKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  event.preventDefault();
+  scrollTimelineBy(event.deltaY);
+}, {passive: false});
 document.getElementById('timeline').addEventListener('mousedown', beginTimelineSelection);
+document.getElementById('playhead')?.addEventListener('pointerdown', event => beginPlayheadScrub(event, 'playhead'));
+document.addEventListener('pointermove', updatePlayheadScrub);
+document.addEventListener('pointerup', finishPlayheadScrub);
+document.addEventListener('pointercancel', finishPlayheadScrub);
 document.getElementById('previewPlayBtn').addEventListener('click', togglePlayback);
 document.getElementById('timelineZoom').addEventListener('input', event => {
   timelineZoom = Number(event.target.value || 42);
@@ -3411,6 +4112,102 @@ function assetCardHtml(asset) {
   `;
 }
 
+function assetFromItem(item) {
+  try {
+    return JSON.parse(item.dataset.asset || '{}');
+  } catch (_error) {
+    return {};
+  }
+}
+
+function assetItems() {
+  return Array.from(document.querySelectorAll('#assetList .asset-item'));
+}
+
+function selectedAssetList() {
+  return assetItems()
+    .map(item => assetFromItem(item))
+    .filter(asset => selectedAssetIds.has(Number(asset.id)));
+}
+
+function isMinePanelActive() {
+  return document.querySelector('[data-media-panel="mine"]')?.classList.contains('is-active');
+}
+
+function shouldSelectAllAssets(event) {
+  const target = event.target;
+  if (target?.closest?.('#assetList, [data-media-panel="mine"]')) return true;
+  return isMinePanelActive() || Boolean(selectedAssetIds.size || selectedAsset);
+}
+
+function syncAssetSelectionUi() {
+  assetItems().forEach(item => {
+    const asset = assetFromItem(item);
+    item.classList.toggle('is-selected', selectedAssetIds.has(Number(asset.id)));
+  });
+  const summary = document.getElementById('assetSelectionSummary');
+  const total = assetItems().length;
+  const selected = selectedAssetIds.size;
+  if (summary) summary.textContent = selected ? `已选 ${selected}/${total}` : String(total);
+}
+
+function selectAssetItem(item, event = {}) {
+  const asset = assetFromItem(item);
+  if (!asset.id) return;
+  const additive = Boolean(event.shiftKey || event.metaKey || event.ctrlKey);
+  if (!additive) selectedAssetIds = new Set();
+  if (additive && selectedAssetIds.has(Number(asset.id))) selectedAssetIds.delete(Number(asset.id));
+  else selectedAssetIds.add(Number(asset.id));
+  selectedAsset = asset;
+  renderPreview(selectedAsset);
+  syncAssetSelectionUi();
+}
+
+function selectAllAssets() {
+  selectedAssetIds = new Set(assetItems().map(item => Number(assetFromItem(item).id)).filter(Boolean));
+  selectedAsset = selectedAssetList().at(-1) || selectedAsset;
+  if (selectedAsset) renderPreview(selectedAsset);
+  syncAssetSelectionUi();
+}
+
+async function addSelectedAssetsToTimeline() {
+  const assets = selectedAssetList();
+  if (!assets.length) return;
+  const first = assets[0];
+  const track = projectData.tracks.find(item => item.track_type === recommendedTrackType(first))
+    || projectData.tracks.find(item => compatibleTrack(item, first));
+  if (!track) return;
+  await addAssetsToTimeline(track, assets, null);
+}
+
+async function deleteAssetById(assetId) {
+  const result = await apiPost(`/api/editor/project/${projectId}/asset/${assetId}/delete`);
+  const item = assetItems().find(card => Number(assetFromItem(card).id) === Number(assetId));
+  item?.remove();
+  selectedAssetIds.delete(Number(assetId));
+  if (selectedAsset?.id === Number(assetId)) {
+    selectedAsset = selectedAssetList().at(-1) || null;
+    renderPreview(selectedAsset);
+  }
+  applyProjectResponse(result);
+  syncAssetSelectionUi();
+}
+
+async function deleteSelectedAssets() {
+  const ids = [...selectedAssetIds];
+  if (!ids.length && selectedAsset?.id) ids.push(Number(selectedAsset.id));
+  for (const id of ids) {
+    try {
+      await deleteAssetById(id);
+    } catch (error) {
+      console.warn('素材删除失败', error);
+    }
+  }
+  if (!selectedAssetIds.size && !selectedAsset) renderPreview(null);
+  await refreshProject();
+  syncAssetSelectionUi();
+}
+
 function bindAssetItem(item) {
   item.addEventListener('pointerdown', event => beginAssetPointerDrag(event, item));
   item.addEventListener('mousedown', event => {
@@ -3424,10 +4221,7 @@ function bindAssetItem(item) {
       event.stopPropagation();
       return;
     }
-    selectedAsset = JSON.parse(item.dataset.asset);
-    document.querySelectorAll('.asset-item').forEach(card => card.classList.remove('is-selected'));
-    item.classList.add('is-selected');
-    renderPreview(selectedAsset);
+    selectAssetItem(item, event);
   });
   item.addEventListener('keydown', event => {
     if (!['Enter', ' '].includes(event.key)) return;
@@ -3440,14 +4234,9 @@ function bindAssetItem(item) {
   item.querySelector('.asset-delete')?.addEventListener('click', async event => {
     event.preventDefault();
     event.stopPropagation();
-    const asset = JSON.parse(item.dataset.asset);
+    const asset = assetFromItem(item);
     try {
-      await apiPost(`/api/editor/project/${projectId}/asset/${asset.id}/delete`);
-      if (selectedAsset?.id === asset.id) {
-        selectedAsset = null;
-        renderPreview(null);
-      }
-      item.remove();
+      await deleteAssetById(asset.id);
       await refreshProject();
     } catch (error) {
       console.warn('素材删除失败', error);
@@ -3456,23 +4245,28 @@ function bindAssetItem(item) {
   item.querySelector('.asset-add')?.addEventListener('click', async event => {
     event.preventDefault();
     event.stopPropagation();
-    const asset = JSON.parse(item.dataset.asset);
+    const asset = assetFromItem(item);
     selectedAsset = asset;
+    selectedAssetIds = new Set([Number(asset.id)]);
+    syncAssetSelectionUi();
     const track = projectData.tracks.find(item => item.track_type === recommendedTrackType(asset))
       || projectData.tracks.find(item => compatibleTrack(item, asset));
     if (!track) return;
-    await addAssetToTrack(track, asset, playheadTime);
+    await addAssetToTrack(track, asset, null);
   });
   item.querySelector('.asset-replace')?.addEventListener('click', async event => {
     event.preventDefault();
     event.stopPropagation();
-    const asset = JSON.parse(item.dataset.asset);
+    const asset = assetFromItem(item);
     selectedAsset = asset;
+    selectedAssetIds = new Set([Number(asset.id)]);
+    syncAssetSelectionUi();
     await replaceSelectedClipAsset(asset);
   });
 }
 
 document.querySelectorAll('.asset-item').forEach(bindAssetItem);
+syncAssetSelectionUi();
 
 function insertAssetCard(asset) {
   asset.deletable = asset.deletable !== false;
@@ -3487,20 +4281,44 @@ function insertAssetCard(asset) {
   list.prepend(button);
   lucide.createIcons();
   showMediaPanel('mine');
+  syncAssetSelectionUi();
   return button;
 }
 
-async function uploadEditorAsset(file) {
+async function uploadEditorAsset(file, options = {}) {
+  const shouldInsert = options.insert !== false;
   const body = new FormData();
   body.append('media', file);
   const res = await fetch(`/api/editor/project/${projectId}/asset`, {method: 'POST', body});
   if (!res.ok) throw new Error(await res.text());
-  const asset = await res.json();
+  const payload = await res.json();
+  const asset = payload.asset || payload;
   asset.deletable = true;
   selectedAsset = asset;
   renderPreview(asset);
-  insertAssetCard(asset);
+  if (shouldInsert) insertAssetCard(asset);
   return asset;
+}
+
+async function uploadEditorAssets(files) {
+  const list = Array.from(files || []).filter(Boolean);
+  if (!list.length) return [];
+  if (list.length === 1) return [await uploadEditorAsset(list[0])];
+  const body = new FormData();
+  list.forEach(file => body.append('media', file));
+  const res = await fetch(`/api/editor/project/${projectId}/asset`, {method: 'POST', body});
+  if (!res.ok) throw new Error(await res.text());
+  const payload = await res.json();
+  const uploaded = payload.assets?.length ? payload.assets : [payload.asset || payload].filter(Boolean);
+  [...uploaded].reverse().forEach(asset => {
+    asset.deletable = asset.deletable !== false;
+    insertAssetCard(asset);
+  });
+  selectedAsset = uploaded[0] || null;
+  selectedAssetIds = new Set(uploaded.map(asset => Number(asset.id)).filter(Boolean));
+  if (selectedAsset) renderPreview(selectedAsset);
+  syncAssetSelectionUi();
+  return uploaded;
 }
 
 function showMediaPanel(panelName) {
@@ -3517,10 +4335,14 @@ document.querySelectorAll('[data-panel-tab]').forEach(button => {
   button.addEventListener('click', () => showMediaPanel(button.dataset.panelTab || 'import'));
 });
 
+document.getElementById('selectAllAssetsBtn')?.addEventListener('click', selectAllAssets);
+document.getElementById('addSelectedAssetsBtn')?.addEventListener('click', addSelectedAssetsToTimeline);
+document.getElementById('deleteSelectedAssetsBtn')?.addEventListener('click', deleteSelectedAssets);
+
 document.getElementById('assetUpload').addEventListener('change', async event => {
-  const file = event.target.files[0];
-  if (!file) return;
-  await uploadEditorAsset(file);
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+  await uploadEditorAssets(files);
   event.target.value = '';
 });
 
@@ -3693,13 +4515,16 @@ document.getElementById('editorNameDialogInput')?.addEventListener('keydown', ev
   }
 });
 
-document.getElementById('undoBtn').addEventListener('click', async () => {
+async function undoProject() {
   applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/undo`));
-});
+}
 
-document.getElementById('redoBtn').addEventListener('click', async () => {
+async function redoProject() {
   applyProjectResponse(await apiPost(`/api/editor/project/${projectId}/redo`));
-});
+}
+
+document.getElementById('undoBtn').addEventListener('click', undoProject);
+document.getElementById('redoBtn').addEventListener('click', redoProject);
 
 document.getElementById('addMarkerBtn').addEventListener('click', addMarkerAtPlayhead);
 
@@ -3871,6 +4696,9 @@ document.getElementById('clearKeyframesBtn').addEventListener('click', async () 
   await refreshProject();
 });
 
+document.getElementById('clearClipEffectBtn')?.addEventListener('click', clearClipEffect);
+document.getElementById('clearClipTransitionBtn')?.addEventListener('click', clearClipTransition);
+
 function setTopToolActive(toolName) {
   document.querySelectorAll('.jy-tool').forEach(button => {
     button.classList.toggle('is-active', button.dataset.tool === toolName);
@@ -3899,8 +4727,55 @@ document.querySelectorAll('.effect-preset').forEach(button => {
   button.addEventListener('click', () => applyEffectPreset(button.dataset.effect));
 });
 
-document.querySelectorAll('.transition-preset').forEach(button => {
-  button.addEventListener('click', () => applyTransitionPreset(button.dataset.transition));
+document.querySelectorAll('.transition-preset[data-transition]').forEach(button => {
+  button.addEventListener('pointerdown', event => beginTransitionPointerDrag(event, button));
+  button.addEventListener('mousedown', event => {
+    if (!window.PointerEvent) beginTransitionPointerDrag(event, button);
+  });
+  button.addEventListener('dragstart', event => event.preventDefault());
+  button.addEventListener('click', event => {
+    if (suppressTransitionClick) {
+      suppressTransitionClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    applyTransitionPreset(button.dataset.transition);
+  });
+});
+
+document.querySelectorAll('[data-custom-effect]').forEach(button => {
+  button.addEventListener('pointerdown', event => beginAssetPointerDrag(event, button));
+  button.addEventListener('mousedown', event => {
+    if (!window.PointerEvent) beginAssetPointerDrag(event, button);
+  });
+  button.addEventListener('dragstart', event => event.preventDefault());
+  button.addEventListener('click', event => {
+    if (suppressAssetClick) {
+      suppressAssetClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    addCustomEffectAssetToTimeline(customEffectAssets[button.dataset.customEffect], 'effect');
+  });
+});
+
+document.querySelectorAll('[data-custom-transition]').forEach(button => {
+  button.addEventListener('pointerdown', event => beginAssetPointerDrag(event, button));
+  button.addEventListener('mousedown', event => {
+    if (!window.PointerEvent) beginAssetPointerDrag(event, button);
+  });
+  button.addEventListener('dragstart', event => event.preventDefault());
+  button.addEventListener('click', event => {
+    if (suppressAssetClick) {
+      suppressAssetClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    addCustomEffectAssetToTimeline(customTransitionAssets[button.dataset.customTransition], 'transition');
+  });
 });
 
 document.getElementById('addTextBtn').addEventListener('click', () => addTextClip(playheadTime));
@@ -3959,6 +4834,18 @@ document.addEventListener('keydown', async event => {
   const editingField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
   if (editingField) return;
   const mod = event.metaKey || event.ctrlKey;
+  if (mod && event.key.toLowerCase() === 'z') {
+    event.preventDefault();
+    if (event.shiftKey) await redoProject();
+    else await undoProject();
+    return;
+  }
+  if (mod && event.key.toLowerCase() === 'a' && shouldSelectAllAssets(event)) {
+    event.preventDefault();
+    showMediaPanel('mine');
+    selectAllAssets();
+    return;
+  }
   if (event.code === 'Space') {
     event.preventDefault();
     togglePlayback();
@@ -4012,12 +4899,20 @@ document.addEventListener('keydown', async event => {
 });
 
 document.addEventListener('mousemove', event => {
+  if (transitionPointerDragState) {
+    updateTransitionPointerDrag(event);
+    return;
+  }
   if (assetPointerDragState) {
     updateAssetPointerDrag(event);
     return;
   }
   if (panelResizeState) {
     updatePanelResize(event);
+    return;
+  }
+  if (trackHeightState) {
+    updateTrackHeightResize(event);
     return;
   }
   if (selectionBoxState) {
@@ -4036,18 +4931,29 @@ document.addEventListener('mousemove', event => {
 });
 
 document.addEventListener('pointermove', event => {
+  if (transitionPointerDragState) {
+    updateTransitionPointerDrag(event);
+  }
   if (assetPointerDragState) {
     updateAssetPointerDrag(event);
   }
 });
 
 document.addEventListener('mouseup', async event => {
+  if (transitionPointerDragState) {
+    await finishTransitionPointerDrag(event);
+    return;
+  }
   if (assetPointerDragState) {
     await finishAssetPointerDrag(event);
     return;
   }
   if (panelResizeState) {
     finishPanelResize();
+    return;
+  }
+  if (trackHeightState) {
+    await finishTrackHeightResize();
     return;
   }
   if (selectionBoxState) {
@@ -4066,6 +4972,9 @@ document.addEventListener('mouseup', async event => {
 });
 
 document.addEventListener('pointerup', async event => {
+  if (transitionPointerDragState) {
+    await finishTransitionPointerDrag(event);
+  }
   if (assetPointerDragState) {
     await finishAssetPointerDrag(event);
   }

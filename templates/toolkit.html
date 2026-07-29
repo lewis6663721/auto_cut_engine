@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <h1 class="page-title font-black text-white">剪辑工具包</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">不进入时间线，直接完成高频文件处理。这里是快捷工具入口，复杂精修仍然去剪辑台。</p>
+    </div>
+    <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+  </div>
+
+  <div class="tool-dock-scroll">
+    <div class="tool-dock">
+      <a class="tool-dock-item" href="/toolkit/burn-subtitles">
+        <span class="tool-dock-icon"><i data-lucide="subtitles"></i></span>
+        <strong>字幕烧录</strong>
+      </a>
+      <a class="tool-dock-item" href="/toolkit/concat-videos">
+        <span class="tool-dock-icon"><i data-lucide="layers-3"></i></span>
+        <strong>视频拼接</strong>
+      </a>
+      <a class="tool-dock-item" href="/toolkit/extract-audio">
+        <span class="tool-dock-icon"><i data-lucide="music-2"></i></span>
+        <strong>提取音频</strong>
+      </a>
+    </div>
+  </div>
+</section>
+{% endblock %}

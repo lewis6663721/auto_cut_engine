@@ -18,7 +18,9 @@
       <article class="soft-card task-row flex flex-col gap-5 px-6 py-5 lg:flex-row lg:items-center lg:justify-between" data-task-id="{{ task.id }}" data-status="{{ task.status }}">
         <div>
           <div class="flex flex-wrap items-center gap-3">
-            <h2 class="text-xl font-black text-white">{{ task.template.name if task.template else "未绑定模板" }}</h2>
+            <h2 class="text-xl font-black text-white">
+              {{ task.template.name if task.template else (task.ai_context.get("tool_name") if task.ai_context else "未绑定模板") }}
+            </h2>
             <span class="text-sm font-semibold text-slate-600">· {{ task.user.username if task.user else "" }} · {{ task.created_at.strftime("%m-%d %H:%M") if task.created_at else "" }}</span>
           </div>
           <div class="mt-3 flex flex-wrap items-center gap-3">
@@ -27,6 +29,26 @@
             </span>
             <span class="task-progress-text text-sm font-black text-cyan-300">{{ task.progress }}%</span>
             <span class="task-stage text-sm font-bold text-slate-500">{{ (task.ai_context or {}).get("progress_stage", "等待调度") }}</span>
+            {% if (task.ai_context or {}).get("tool_name") %}
+              <span class="rounded-full bg-cyan-950/40 px-3 py-1 text-xs font-black text-cyan-300">{{ task.ai_context.get("tool_name") }}</span>
+            {% endif %}
+            {% set tool_extra = (task.ai_context or {}).get("tool_result_extra", {}) %}
+            {% if (task.ai_context or {}).get("tool_key") == "video_transcription" %}
+              {% set asr_model = tool_extra.get("model") or (task.ai_context or {}).get("model") or "" %}
+              {% set asr_label = tool_extra.get("asr_source_label") %}
+              {% if not asr_label %}
+                {% if tool_extra.get("fallback_used") %}
+                  {% set asr_label = "本地兜底字幕" %}
+                {% elif asr_model.startswith("fun-asr") %}
+                  {% set asr_label = "Fun-ASR 大模型" %}
+                {% elif asr_model.startswith("qwen3-asr") %}
+                  {% set asr_label = "Qwen3-ASR 大模型" %}
+                {% else %}
+                  {% set asr_label = "远程大模型" %}
+                {% endif %}
+              {% endif %}
+              <span class="rounded-full {% if tool_extra.get("fallback_used") %}bg-amber-950/50 text-amber-300{% else %}bg-emerald-950/45 text-emerald-300{% endif %} px-3 py-1 text-xs font-black">{{ asr_label }}</span>
+            {% endif %}
           </div>
           <div class="mt-3 h-2 w-full max-w-md rounded-full bg-slate-900">
             <div class="task-progress-bar h-2 rounded-full bg-cyan-400 transition-all" style="width: {{ task.progress }}%"></div>
@@ -35,7 +57,9 @@
         <div class="task-actions flex flex-wrap gap-3 lg:justify-end">
           <a href="/task/{{ task.id }}" class="muted-button rounded-xl px-4 py-3 text-sm font-black">📋 详情</a>
           {% if task.result_url %}
-            <a href="/task/{{ task.id }}#preview" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">▶ 内嵌预览</a>
+            <a href="/task/{{ task.id }}#preview" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">
+              {% if (task.ai_context or {}).get("tool_result_kind") == "subtitle" %}📄 查看结果{% else %}▶ 内嵌预览{% endif %}
+            </a>
             <a href="{{ task.result_url }}" class="muted-button rounded-xl px-4 py-3 text-sm font-black" download>⬇ 下载</a>
           {% else %}
             <span class="muted-button cursor-not-allowed rounded-xl px-4 py-3 text-sm font-black opacity-50">▶ 等待成片</span>
@@ -60,13 +84,24 @@ const statusLabels = {
 
 function updateRow(row, task) {
   const previousStatus = row.dataset.status;
+  const previousProgress = row.dataset.progress || '';
+  const previousStage = row.dataset.stage || '';
+  const nextProgress = String(task.progress);
+  const nextStage = task.stage || '';
+  if (previousStatus === task.status && previousProgress === nextProgress && previousStage === nextStage) {
+    row.dataset.unchangedCount = String((Number(row.dataset.unchangedCount || 0) + 1));
+  } else {
+    row.dataset.unchangedCount = '0';
+  }
   row.dataset.status = task.status;
+  row.dataset.progress = nextProgress;
+  row.dataset.stage = nextStage;
   const statusEl = row.querySelector('.task-status');
   statusEl.className = `task-status inline-flex rounded-full px-3 py-1 text-sm font-black status-${task.status}`;
   statusEl.textContent = statusLabels[task.status] || task.status;
   row.querySelector('.task-progress-text').textContent = `${task.progress}%`;
   const stage = row.querySelector('.task-stage');
-  if (stage) stage.textContent = task.stage || '';
+  if (stage) stage.textContent = nextStage;
   row.querySelector('.task-progress-bar').style.width = `${task.progress}%`;
   if ((task.status === 'success' || task.status === 'failed') && previousStatus !== task.status) {
     window.location.reload();
@@ -74,8 +109,15 @@ function updateRow(row, task) {
 }
 
 async function pollTaskRows() {
+  if (document.hidden) {
+    setTimeout(pollTaskRows, 5000);
+    return;
+  }
   const rows = Array.from(document.querySelectorAll('.task-row'));
-  const activeRows = rows.filter(row => ['pending', 'processing'].includes(row.dataset.status));
+  const activeRows = rows.filter(row => {
+    if (!['pending', 'processing'].includes(row.dataset.status)) return false;
+    return Number(row.dataset.unchangedCount || 0) < 40;
+  });
   if (!activeRows.length) return;
   const ids = activeRows.map(row => row.dataset.taskId).join(',');
   const res = await fetch(`/api/tasks/progress?ids=${ids}`);
@@ -85,7 +127,9 @@ async function pollTaskRows() {
     const row = document.querySelector(`.task-row[data-task-id="${task.id}"]`);
     if (row) updateRow(row, task);
   });
-  setTimeout(pollTaskRows, 1500);
+  const maxUnchanged = Math.max(0, ...activeRows.map(row => Number(row.dataset.unchangedCount || 0)));
+  const nextDelay = maxUnchanged > 12 ? 6000 : maxUnchanged > 5 ? 3000 : 1500;
+  setTimeout(pollTaskRows, nextDelay);
 }
 
 pollTaskRows();

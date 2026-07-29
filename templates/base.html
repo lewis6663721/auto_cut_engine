@@ -3,33 +3,57 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ title or "AutoCut Engine" }}</title>
+  <title>{{ title or site_name or "剪·AI" }}</title>
+  <link rel="icon" href="{{ site_logo_url or '/brand/logo.png' }}" type="image/png">
+  <link rel="apple-touch-icon" href="{{ site_logo_url or '/brand/logo.png' }}">
+  <meta name="application-name" content="{{ site_name or '剪·AI' }}">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/css/app.css?v=20260713-editor">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260728-effect-asset-upload">
 </head>
 <body class="min-h-screen text-slate-100">
   <header class="sticky top-0 z-40 app-nav">
     <nav class="app-shell flex h-full flex-col items-start justify-center gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <a href="/" class="flex items-center gap-3 text-xl font-extrabold tracking-tight md:text-2xl">
-        <span class="text-2xl leading-none md:text-3xl">🎬</span>
-        <span class="brand-text">AutoCut Engine</span>
+      <a href="/" class="app-brand flex items-center gap-3 text-xl font-extrabold tracking-tight md:text-2xl">
+        <img src="{{ site_logo_url or '/brand/logo.png' }}" alt="{{ site_name or '剪·AI' }} logo" class="app-brand-logo">
+        <span class="brand-text">{{ site_name or "剪·AI" }}</span>
       </a>
-      <div class="flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-400 sm:justify-end md:gap-6 md:text-base">
-        <a class="transition hover:text-slate-100" href="/">首页</a>
+      <div class="nav-menu">
+        <a class="nav-link" href="/">首页</a>
+        <div class="nav-group">
+          <button class="nav-group-button" type="button" aria-haspopup="true">创作工作台<i data-lucide="chevron-down"></i></button>
+          <div class="nav-dropdown">
+            <a href="/templates"><i data-lucide="layout-template"></i><span>模板中心</span></a>
+            {% if user %}
+            <a href="/editor"><i data-lucide="scissors"></i><span>剪辑台</span></a>
+            <a href="/remotion-templates"><i data-lucide="clapperboard"></i><span>Remotion 模板工厂</span></a>
+            <a href="/effect-assets/upload"><i data-lucide="upload-cloud"></i><span>导入特效资产</span></a>
+            <a href="/creative"><i data-lucide="sparkles"></i><span>创意坊</span></a>
+            {% endif %}
+          </div>
+        </div>
         {% if user %}
-        <a class="transition hover:text-slate-100" href="/editor">剪辑台</a>
-        <a class="transition hover:text-slate-100" href="/creative">🎨 创意坊</a>
-        <a class="transition hover:text-slate-100" href="/tasks">任务中心</a>
-        {% endif %}
-        {% if user and user.is_admin %}
-          <a class="transition hover:text-slate-100" href="/admin">⚙ 管理后台</a>
-        {% endif %}
-        {% if user %}
-          <span class="hidden text-slate-300 sm:inline">👑 {{ user.username }}</span>
-          <a class="text-slate-500 transition hover:text-slate-200" href="/logout">退出</a>
+        <div class="nav-group">
+          <button class="nav-group-button" type="button" aria-haspopup="true">工具包<i data-lucide="chevron-down"></i></button>
+          <div class="nav-dropdown">
+            <a href="/toolkit"><i data-lucide="package"></i><span>剪辑工具包</span></a>
+            <a href="/ai-tools"><i data-lucide="brain"></i><span>AI 工具包</span></a>
+          </div>
+        </div>
+        <div class="nav-group">
+          <button class="nav-group-button" type="button" aria-haspopup="true">任务管理<i data-lucide="chevron-down"></i></button>
+          <div class="nav-dropdown">
+            <a href="/tasks"><i data-lucide="list-checks"></i><span>任务中心</span></a>
+            <a href="/account"><i data-lucide="user-cog"></i><span>用户中心</span></a>
+            {% if user.is_admin %}
+            <a href="/admin"><i data-lucide="settings"></i><span>管理后台</span></a>
+            {% endif %}
+          </div>
+        </div>
+          <span class="nav-user">{{ user.username }}</span>
+          <a class="nav-link is-muted" href="/logout">退出</a>
         {% else %}
-          <a class="transition hover:text-slate-100" href="/login">登录</a>
+          <a class="nav-link" href="/login">登录</a>
         {% endif %}
       </div>
     </nav>
@@ -38,8 +62,181 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="border-t border-slate-800/70 py-8 text-center text-sm text-slate-600">
-    AutoCut Engine 1.0 - 将人类顶级剪辑经验代码化、资产化、自动化
+    {{ site_name or "剪·AI" }} - 将剪辑经验代码化、资产化、自动化
   </footer>
+  {% if user %}
+  <aside id="floatingAiAssistant" class="floating-ai-assistant" aria-label="AI 对话助手">
+    <button id="floatingAiToggle" class="floating-ai-toggle" type="button" aria-label="打开 AI 对话助手">
+      <i data-lucide="messages-square"></i>
+      <span>AI</span>
+    </button>
+    <section id="floatingAiPanel" class="floating-ai-panel" hidden>
+      <header class="floating-ai-header">
+        <div>
+          <strong>AI 对话助手</strong>
+          <span>剪辑问题随手问</span>
+        </div>
+        <button id="floatingAiClose" class="floating-ai-close" type="button" aria-label="关闭 AI 对话助手">
+          <i data-lucide="x"></i>
+        </button>
+      </header>
+      <div class="floating-ai-config">
+        <select id="floatingAiProvider"></select>
+        <select id="floatingAiModel"></select>
+      </div>
+      <div id="floatingAiHint" class="floating-ai-hint">打开后会读取用户中心的大模型配置。</div>
+      <div id="floatingAiMessages" class="floating-ai-messages">
+        <div class="floating-ai-empty">可以问：帮我把这段视频做成漫剧剪辑方案。</div>
+      </div>
+      <div class="floating-ai-input-row">
+        <textarea id="floatingAiInput" rows="2" placeholder="输入问题，Ctrl/⌘ + Enter 发送"></textarea>
+        <button id="floatingAiSend" class="floating-ai-send" type="button">发送</button>
+      </div>
+      <div class="floating-ai-footer">
+        <button id="floatingAiClear" type="button">清空</button>
+        <a href="/ai-tools/chat">打开完整助手</a>
+      </div>
+    </section>
+  </aside>
+  {% endif %}
   <script>lucide.createIcons();</script>
+  {% if user %}
+  <script>
+  (() => {
+    const root = document.getElementById('floatingAiAssistant');
+    if (!root) return;
+    const toggle = document.getElementById('floatingAiToggle');
+    const panel = document.getElementById('floatingAiPanel');
+    const closeButton = document.getElementById('floatingAiClose');
+    const providerSelect = document.getElementById('floatingAiProvider');
+    const modelSelect = document.getElementById('floatingAiModel');
+    const hint = document.getElementById('floatingAiHint');
+    const messagesEl = document.getElementById('floatingAiMessages');
+    const input = document.getElementById('floatingAiInput');
+    const send = document.getElementById('floatingAiSend');
+    const clear = document.getElementById('floatingAiClear');
+    const state = { loaded: false, providers: [], messages: [] };
+
+    const fillSelect = (select, values, currentValue) => {
+      select.textContent = '';
+      values.filter(Boolean).forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+      });
+      if (currentValue && values.includes(currentValue)) select.value = currentValue;
+    };
+
+    const renderMessages = () => {
+      messagesEl.textContent = '';
+      if (!state.messages.length) {
+        const empty = document.createElement('div');
+        empty.className = 'floating-ai-empty';
+        empty.textContent = '可以问：帮我把这段视频做成漫剧剪辑方案。';
+        messagesEl.appendChild(empty);
+        return;
+      }
+      state.messages.forEach((message) => {
+        const bubble = document.createElement('div');
+        bubble.className = `floating-ai-bubble floating-ai-bubble-${message.role}`;
+        bubble.textContent = message.content;
+        messagesEl.appendChild(bubble);
+      });
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    };
+
+    const syncProvider = () => {
+      const provider = state.providers.find((item) => item.id === providerSelect.value) || state.providers[0];
+      if (!provider) return;
+      fillSelect(modelSelect, provider.model_options || [], provider.model || '');
+      hint.textContent = provider.configured === 'true'
+        ? '当前 Provider 已配置，可以快速对话。'
+        : '当前 Provider 缺少 API Key，请到用户中心配置。';
+    };
+
+    const loadProviders = async () => {
+      if (state.loaded) return;
+      const response = await fetch('/api/ai-tools/chat/providers');
+      if (!response.ok) throw new Error('读取模型配置失败');
+      state.providers = await response.json();
+      state.loaded = true;
+      providerSelect.textContent = '';
+      state.providers.forEach((provider) => {
+        const option = document.createElement('option');
+        option.value = provider.id;
+        option.textContent = `${provider.display_label || provider.label}${provider.configured === 'true' ? ' · 已配置' : ' · 未配置'}`;
+        providerSelect.appendChild(option);
+      });
+      syncProvider();
+    };
+
+    const openPanel = async () => {
+      panel.hidden = false;
+      root.classList.add('is-open');
+      try {
+        await loadProviders();
+      } catch (error) {
+        hint.textContent = error.message || '读取模型配置失败';
+      }
+      input?.focus();
+      window.lucide?.createIcons();
+    };
+
+    const closePanel = () => {
+      panel.hidden = true;
+      root.classList.remove('is-open');
+    };
+
+    const sendMessage = async () => {
+      const text = (input.value || '').trim();
+      if (!text || send.disabled) return;
+      state.messages.push({ role: 'user', content: text });
+      input.value = '';
+      renderMessages();
+      send.disabled = true;
+      send.textContent = '发送中';
+      try {
+        const provider = state.providers.find((item) => item.id === providerSelect.value) || {};
+        const response = await fetch('/api/ai-tools/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: providerSelect.value || 'env:qwen',
+            base_url: provider.base_url || '',
+            model: modelSelect.value || provider.model || '',
+            system_prompt: '你是剪·AI 的剪辑助手，回答要具体、可执行，优先围绕短视频剪辑、脚本、字幕、镜头和自动化工作流给建议。',
+            messages: state.messages,
+            temperature: 0.7,
+            max_tokens: 2048,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || data.message || '对话请求失败');
+        state.messages.push({ role: 'assistant', content: data.reply || '' });
+      } catch (error) {
+        state.messages.push({ role: 'assistant', content: `请求失败：${error.message || error}` });
+      } finally {
+        send.disabled = false;
+        send.textContent = '发送';
+        renderMessages();
+      }
+    };
+
+    providerSelect?.addEventListener('change', syncProvider);
+    toggle?.addEventListener('click', () => panel.hidden ? openPanel() : closePanel());
+    closeButton?.addEventListener('click', closePanel);
+    send?.addEventListener('click', sendMessage);
+    clear?.addEventListener('click', () => {
+      state.messages = [];
+      renderMessages();
+    });
+    input?.addEventListener('keydown', (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') sendMessage();
+    });
+    renderMessages();
+  })();
+  </script>
+  {% endif %}
 </body>
 </html>

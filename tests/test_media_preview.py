@@ -24,3 +24,29 @@ async def test_asset_payload_contains_preview_url_field(client):
     payload = asset_payload(asset)
     assert "preview_url" in payload
     assert "waveform_url" in payload
+
+
+@pytest.mark.asyncio
+async def test_asset_payload_contains_media_duration(client, tmp_path, monkeypatch):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    path = tmp_path / "fifteen_seconds.mp4"
+    path.write_bytes(b"fake")
+    asset = await Asset.create(name=path.name, file_path=str(path), asset_type="video", tags=["editor"])
+    monkeypatch.setattr("main.probe_duration", lambda incoming: 15.234 if str(incoming).endswith(path.name) else 0)
+
+    payload = asset_payload(asset)
+
+    assert payload["duration"] == 15.234
+
+
+@pytest.mark.asyncio
+async def test_sfx_asset_payload_contains_media_duration(client, tmp_path, monkeypatch):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    path = tmp_path / "hit.wav"
+    path.write_bytes(b"fake")
+    asset = await Asset.create(name=path.name, file_path=str(path), asset_type="sfx", tags=["test"])
+    monkeypatch.setattr("main.probe_duration", lambda incoming: 1.75 if str(incoming).endswith(path.name) else 0)
+
+    payload = asset_payload(asset)
+
+    assert payload["duration"] == 1.75

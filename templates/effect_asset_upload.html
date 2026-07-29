@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/remotion-templates" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回 Remotion 模板工厂</a>
+      <h1 class="page-title mt-3 font-black text-white">导入特效资产</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">导入自己的透明动效、视频叠加、音效、Lottie、LUT 或 Remotion 模板包，沉淀到剪辑台特效库和转场库。</p>
+    </div>
+    <a href="/editor" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">打开剪辑台</a>
+  </div>
+
+  <form class="tool-workbench" action="/effect-assets/upload" method="post" enctype="multipart/form-data">
+    <section class="tool-config-panel">
+      <div class="tool-section">
+        <h2>资产信息</h2>
+        <label class="tool-field">资产名称
+          <input name="name" placeholder="例如：电流闪白 / 漫画分镜擦入">
+        </label>
+        <label class="tool-field">用途
+          <select name="library_group">
+            <option value="effect">特效库</option>
+            <option value="transition">转场库</option>
+          </select>
+        </label>
+        <label class="tool-field">格式类型
+          <select name="asset_kind" id="effectAssetKind">
+            <option value="transparent_video">透明动效：webm / mov</option>
+            <option value="video_overlay">视频叠加：mp4 / mov / webm</option>
+            <option value="remotion_zip">Remotion 模板包：zip</option>
+            <option value="image_sequence">图片序列：png 序列 zip</option>
+            <option value="lottie">Lottie 动效：json</option>
+            <option value="lut">LUT 调色：cube</option>
+            <option value="sfx">音效：wav / mp3 / aac</option>
+          </select>
+        </label>
+        <label class="tool-field">文件
+          <input id="effectAssetFile" name="asset_file" type="file" accept=".zip,.webm,.mov,.mp4,.m4v,.png,.jpg,.jpeg,.webp,.json,.cube,.wav,.mp3,.aac,.m4a,.flac,.ogg" required>
+        </label>
+        <label class="tool-field">描述
+          <textarea name="description" rows="4" placeholder="这个特效适合什么场景、怎么使用。"></textarea>
+        </label>
+        <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">导入资产</button>
+      </div>
+    </section>
+
+    <section class="subtitle-preview-panel">
+      <div class="tool-section">
+        <h2>格式约定</h2>
+        <div class="effect-upload-guide">
+          <article><strong>素材类</strong><span>透明视频 / 普通视频 / 图片点击后会加入叠加轨；音效会加入音效轨。</span></article>
+          <article><strong>Remotion zip</strong><span>需要包含 manifest.json 和 entry 指向的 Root.tsx，导入后进入代码级特效/转场库。</span></article>
+          <article><strong>Lottie / LUT</strong><span>先入库展示，后续接 Lottie 渲染和 LUT 滤镜适配。</span></article>
+        </div>
+      </div>
+      <div class="tool-section">
+        <h2>已导入</h2>
+        <div class="effect-upload-summary">
+          <span>特效 {{ custom_assets.effects|length }}</span>
+          <span>转场 {{ custom_assets.transitions|length }}</span>
+          <span>待适配 {{ custom_assets.pending|length }}</span>
+        </div>
+      </div>
+    </section>
+  </form>
+</section>
+{% endblock %}

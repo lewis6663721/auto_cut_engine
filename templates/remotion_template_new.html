@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/remotion-templates" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回模板工厂</a>
+      <h1 class="page-title mt-3 font-black text-white">生成 Remotion 模板</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">上传草图、参考图或截图，再描述你想要的布局、字幕、转场和节奏，系统会生成模板蓝图和 Remotion 源码草稿。</p>
+    </div>
+  </div>
+
+  <form class="tool-workbench" action="/remotion-templates/create" method="post" enctype="multipart/form-data">
+    <section class="tool-config-panel">
+      <div class="tool-section">
+        <h2>输入</h2>
+        <label class="tool-field">模板名称
+          <input name="title" placeholder="例如：英雄联盟战斗开场模板">
+        </label>
+        <label class="tool-field">口头描述 / 需求
+          <textarea name="description" rows="8" placeholder="例如：我要一个英雄联盟战斗感开场，字幕炸裂出现，镜头快速推进，中间用故障闪切和速度线转场，结尾标题回弹。" required></textarea>
+        </label>
+        <label class="tool-field">参考图 / 草图 / 模板截图
+          <input id="remotionReferenceInput" name="reference_files" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+        </label>
+        <div class="tool-hint">第一阶段只生成代码草稿和安全预览，不自动执行 AI 生成代码；后续接入沙箱 Remotion 渲染。</div>
+      </div>
+
+      <div class="tool-section">
+        <h2>模板参数</h2>
+        <div class="grid gap-4 md:grid-cols-3">
+          <label class="tool-field">类型
+            <select name="category">
+              <option value="motion">动效包装</option>
+              <option value="caption">字幕包装</option>
+              <option value="opening">片头开场</option>
+              <option value="transition">转场模板</option>
+              <option value="effect">特效模板</option>
+              <option value="promo">宣传视频</option>
+            </select>
+          </label>
+          <label class="tool-field">画幅
+            <select name="aspect_ratio">
+              <option value="9:16">9:16 竖屏</option>
+              <option value="16:9">16:9 横屏</option>
+              <option value="1:1">1:1 方形</option>
+              <option value="4:5">4:5 信息流</option>
+            </select>
+          </label>
+          <label class="tool-field">时长
+            <input name="duration" type="number" min="3" max="60" step="1" value="8">
+          </label>
+        </div>
+      </div>
+
+      <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">生成模板草稿</button>
+    </section>
+
+    <section class="subtitle-preview-panel">
+      <div class="remotion-reference-preview" id="remotionReferencePreview">
+        <div class="reference-preview-empty">上传参考图后会显示在这里</div>
+      </div>
+      <div class="remotion-library-mini">
+        <h2>已内置转场 / 特效</h2>
+        {% for item in library.transitions %}
+          <span>{{ item.name }}</span>
+        {% endfor %}
+        {% for item in library.effects %}
+          <span>{{ item.name }}</span>
+        {% endfor %}
+      </div>
+    </section>
+  </form>
+</section>
+
+<script>
+document.getElementById('remotionReferenceInput')?.addEventListener('change', (event) => {
+  const grid = document.getElementById('remotionReferencePreview');
+  if (!grid) return;
+  grid.textContent = '';
+  const files = Array.from(event.target.files || []);
+  if (!files.length) {
+    const empty = document.createElement('div');
+    empty.className = 'reference-preview-empty';
+    empty.textContent = '上传参考图后会显示在这里';
+    grid.appendChild(empty);
+    return;
+  }
+  files.slice(0, 6).forEach((file) => {
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(file);
+    img.alt = file.name;
+    grid.appendChild(img);
+  });
+});
+</script>
+{% endblock %}

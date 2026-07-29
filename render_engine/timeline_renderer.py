@@ -11,6 +11,7 @@ from typing import Any
 from config import settings
 from models import RenderTask, TimelineClip, TimelineProject, TimelineTrack
 from render_engine.pipeline import result_path_for_task
+from render_engine.remotion_timeline_renderer import render_remotion_timeline_project, timeline_has_remotion_assets
 from render_engine.scene_detector import probe_duration
 
 
@@ -23,6 +24,34 @@ async def render_timeline_project(project_id: int, task_id: int) -> RenderTask:
 
     try:
         await _update(task, 6, "正在读取多轨时间线")
+        remotion_error = ""
+        if settings.remotion_render_enabled and timeline_has_remotion_assets(project):
+            try:
+                await render_remotion_timeline_project(
+                    project,
+                    output_path,
+                    export_settings,
+                    progress=lambda progress, stage: _update(task, progress, stage),
+                )
+                context = dict(task.ai_context or {})
+                context["remotion_render"] = {"status": "success", "engine": "remotion"}
+                await task.update_from_dict({"ai_context": context}).save()
+                task.ai_context = context
+                await _update(
+                    task,
+                    100,
+                    "Remotion 真渲染完成",
+                    status="success",
+                    result_url=f"/media/results/{output_path.name}",
+                    completed_at=datetime.now(),
+                )
+                return task
+            except Exception as exc:
+                remotion_error = str(exc)
+                context = dict(task.ai_context or {})
+                context["remotion_render"] = {"status": "fallback_ffmpeg", "error": remotion_error[-1200:]}
+                await task.update_from_dict({"ai_context": context}).save()
+                await _update(task, 44, "Remotion 渲染失败，正在回落 FFmpeg 导出")
         command = _build_timeline_command(project, output_path, export_settings=export_settings)
         if shutil.which("ffmpeg"):
             await _update(task, 18, "正在合成视频轨、叠加轨和音频轨")
@@ -30,6 +59,14 @@ async def render_timeline_project(project_id: int, task_id: int) -> RenderTask:
         else:
             await _update(task, 70, "本机缺少 FFmpeg，已保存时间线命令预览")
             output_path.write_text(" ".join(command), encoding="utf-8")
+        context = dict(task.ai_context or {})
+        if remotion_error:
+            context["remotion_render"] = {"status": "fallback_ffmpeg", "error": remotion_error[-1200:]}
+        elif timeline_has_remotion_assets(project):
+            context["remotion_render"] = {"status": "disabled_or_unavailable"}
+        if context != (task.ai_context or {}):
+            await task.update_from_dict({"ai_context": context}).save()
+            task.ai_context = context
         await _update(
             task,
             100,

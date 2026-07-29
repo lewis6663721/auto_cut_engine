@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/ai-tools" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回 AI 工具包</a>
+      <h1 class="page-title mt-3 font-black text-white">声音复刻口播</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">上传授权音频样本，创建复刻音色后生成指定口播内容。当前优先支持阿里百炼 Qwen-TTS。</p>
+    </div>
+    <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+  </div>
+
+  <form class="tool-workbench" action="/ai-tools/voice-clone-tts" method="post" enctype="multipart/form-data">
+    <section class="tool-config-panel">
+      {% if providers %}
+        <div class="tool-section">
+          <h2>参考音频</h2>
+          <label class="tool-field">音频样本
+            <input id="voiceAudioInput" name="reference_audio" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg" required>
+          </label>
+          <label class="tool-field">样本原文
+            <textarea name="reference_text" rows="3" placeholder="可选。填写参考音频对应的文字，有助于排查和管理。"></textarea>
+          </label>
+          <label class="tool-field inline-tool-check">
+            <input name="voice_consent" type="checkbox" value="true" required>
+            <span>我确认拥有该声音的使用授权</span>
+          </label>
+        </div>
+
+        <div class="tool-section">
+          <h2>模型</h2>
+          <label class="tool-field">Provider
+            <select id="voiceProviderSelect" name="provider">
+              {% for provider in providers %}
+                <option value="{{ provider.id }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.model }}" data-model-options='{{ provider.model_options | tojson }}' data-configured="{{ provider.configured }}">
+                  {{ provider.label }}{% if provider.source == "user" %} · 用户中心{% else %} · 环境变量{% endif %}{% if provider.configured == "true" %} · 已配置{% else %} · 未配置{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">Base URL
+              <input id="voiceBaseUrlInput" name="base_url" value="{{ providers[0].base_url }}">
+            </label>
+            <label class="tool-field">复刻接口模型
+              <select name="clone_model">
+                <option value="qwen-voice-enrollment">qwen-voice-enrollment</option>
+              </select>
+            </label>
+            <label class="tool-field">复刻目标模型
+              <select id="voiceTargetModelSelect" name="target_model"></select>
+            </label>
+            <label class="tool-field">合成模型
+              <select id="voiceSynthesisModelSelect" name="synthesis_model"></select>
+            </label>
+          </div>
+          <div id="voiceProviderHint" class="tool-hint">Qwen-TTS 声音复刻使用 Base64 音频提交，适合本地上传；生成的 voice 会传入后续语音合成。</div>
+        </div>
+
+        <div class="tool-section">
+          <h2>口播内容</h2>
+          <label class="tool-field">要生成的口播
+            <textarea id="speechTextInput" name="speech_text" rows="6" placeholder="例如：大家好，今天给大家介绍这款产品的三个核心亮点..." required></textarea>
+          </label>
+          <label class="tool-field">指令控制
+            <textarea name="instructions" rows="3" placeholder="可选。例如：语速稍快，情绪热情，适合直播间种草口播。"></textarea>
+          </label>
+        </div>
+
+        <div class="tool-section">
+          <h2>输出参数</h2>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">音色名称前缀
+              <input name="preferred_name" value="myvoice" maxlength="16" pattern="[A-Za-z0-9_]+">
+            </label>
+            <label class="tool-field">参考音频语种
+              <select name="language">
+                <option value="zh">中文</option>
+                <option value="en">英文</option>
+                <option value="ja">日语</option>
+                <option value="ko">韩语</option>
+              </select>
+            </label>
+            <label class="tool-field">文本语种
+              <select name="language_type">
+                <option value="Chinese">Chinese</option>
+                <option value="English">English</option>
+                <option value="Japanese">Japanese</option>
+                <option value="Korean">Korean</option>
+              </select>
+            </label>
+            <label class="tool-field">输出格式
+              <select name="output_format">
+                <option value="mp3">mp3</option>
+                <option value="wav">wav</option>
+              </select>
+            </label>
+            <label class="tool-field">采样率
+              <select name="sample_rate">
+                <option value="24000">24000</option>
+                <option value="16000">16000</option>
+                <option value="48000">48000</option>
+              </select>
+            </label>
+            <label class="tool-field">优化指令
+              <select name="optimize_instructions">
+                <option value="true">开启</option>
+                <option value="false">关闭</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">开始生成</button>
+      {% else %}
+        <div class="tool-empty-state">
+          <span class="tool-dock-icon"><i data-lucide="mic-vocal"></i></span>
+          <strong>还没有可用的语音 Provider</strong>
+          <p>请先到用户中心配置阿里百炼 / Qwen 的 API Key 和 Base URL。</p>
+          <a href="/account" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">去用户中心配置</a>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="subtitle-preview-panel">
+      <div class="ai-preview-card">
+        <span class="tool-dock-icon"><i data-lucide="mic-vocal"></i></span>
+        <strong>生成后在任务详情页试听音频</strong>
+        <p id="speechPreviewText">这里会同步显示要生成的口播内容。</p>
+      </div>
+      <div id="voiceAudioPreview" class="tool-hint mt-4">选择参考音频后会显示文件名。</div>
+    </section>
+  </form>
+</section>
+
+<script>
+const fillSelectOptions = (select, values, currentValue) => {
+  if (!select) return;
+  select.textContent = '';
+  const rows = (values || []).filter(Boolean);
+  rows.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  if (currentValue && rows.includes(currentValue)) {
+    select.value = currentValue;
+  } else if (rows.length) {
+    select.value = rows[0];
+  }
+};
+
+const voiceProviderSelect = document.getElementById('voiceProviderSelect');
+const voiceBaseUrlInput = document.getElementById('voiceBaseUrlInput');
+const voiceTargetModelSelect = document.getElementById('voiceTargetModelSelect');
+const voiceSynthesisModelSelect = document.getElementById('voiceSynthesisModelSelect');
+const voiceProviderHint = document.getElementById('voiceProviderHint');
+const syncVoiceProvider = () => {
+  const option = voiceProviderSelect?.selectedOptions?.[0];
+  if (!option) return;
+  const options = JSON.parse(option.dataset.modelOptions || '[]');
+  voiceBaseUrlInput.value = option.dataset.baseUrl || '';
+  const vcDefault = options.includes('qwen3-tts-vc-2026-01-22') ? 'qwen3-tts-vc-2026-01-22' : option.dataset.model || '';
+  fillSelectOptions(voiceTargetModelSelect, options, vcDefault);
+  const synthesisDefault = options.includes('qwen3-tts-vc-2026-01-22') ? 'qwen3-tts-vc-2026-01-22' : option.dataset.model || '';
+  fillSelectOptions(voiceSynthesisModelSelect, options, synthesisDefault);
+  if (voiceProviderHint) {
+    voiceProviderHint.textContent = option.dataset.configured === 'true'
+      ? '当前 Provider 已配置，可提交声音复刻口播任务。'
+      : '当前 Provider 缺少 API Key，提交后会提示补齐配置。';
+  }
+};
+voiceProviderSelect?.addEventListener('change', syncVoiceProvider);
+syncVoiceProvider();
+
+document.getElementById('speechTextInput')?.addEventListener('input', (event) => {
+  const target = document.getElementById('speechPreviewText');
+  if (target) target.textContent = event.target.value.trim() || '这里会同步显示要生成的口播内容。';
+});
+document.getElementById('voiceAudioInput')?.addEventListener('change', (event) => {
+  const target = document.getElementById('voiceAudioPreview');
+  const file = event.target.files?.[0];
+  if (target) target.textContent = file ? `参考音频：${file.name}` : '选择参考音频后会显示文件名。';
+});
+</script>
+{% endblock %}

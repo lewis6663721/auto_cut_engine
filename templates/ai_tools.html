@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <h1 class="page-title font-black text-white">AI 工具包</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">面向多模态 API 的工具集合。首页只展示工具入口，具体操作进入对应工具页。</p>
+    </div>
+    <div class="flex flex-wrap gap-3">
+      <a href="/account" class="muted-button rounded-xl px-5 py-3 text-sm font-black">用户中心</a>
+      <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+    </div>
+  </div>
+
+  <div class="tool-dock-scroll">
+    <div class="tool-dock">
+      <a class="tool-dock-item" href="/ai-tools/chat">
+        <span class="tool-dock-icon"><i data-lucide="messages-square"></i></span>
+        <strong>AI 对话助手</strong>
+      </a>
+      <a class="tool-dock-item" href="/ai-tools/video-transcription">
+        <span class="tool-dock-icon"><i data-lucide="captions"></i></span>
+        <strong>视频转字幕</strong>
+      </a>
+      <a class="tool-dock-item" href="/ai-tools/text-image">
+        <span class="tool-dock-icon"><i data-lucide="image"></i></span>
+        <strong>文生图</strong>
+      </a>
+      <a class="tool-dock-item" href="/ai-tools/text-video">
+        <span class="tool-dock-icon"><i data-lucide="video"></i></span>
+        <strong>文生视频</strong>
+      </a>
+      <a class="tool-dock-item" href="/ai-tools/reference-video">
+        <span class="tool-dock-icon"><i data-lucide="film"></i></span>
+        <strong>参考生视频</strong>
+      </a>
+      <a class="tool-dock-item" href="/ai-tools/voice-clone-tts">
+        <span class="tool-dock-icon"><i data-lucide="mic-vocal"></i></span>
+        <strong>声音复刻口播</strong>
+      </a>
+    </div>
+  </div>
+</section>
+{% endblock %}

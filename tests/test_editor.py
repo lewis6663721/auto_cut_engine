@@ -6,8 +6,10 @@ from io import BytesIO
 import pytest
 
 import main as app_main
+import render_engine.remotion_timeline_renderer as remotion_timeline_renderer
 import render_engine.timeline_renderer as timeline_renderer
 from models import Asset, RenderTask, TimelineClip, TimelineProject, TimelineTrack
+from render_engine.remotion_timeline_renderer import build_remotion_timeline_job, timeline_has_remotion_assets
 from render_engine.timeline_renderer import _build_timeline_command, _ffmpeg_supports_drawtext, _timeline_result_path
 
 
@@ -23,6 +25,31 @@ async def test_editor_creates_project_with_default_tracks(client):
     project = await TimelineProject.get(name="测试剪辑工程")
     tracks = await TimelineTrack.filter(project=project)
     assert {track.track_type for track in tracks} >= {"video", "overlay", "text", "audio", "sfx"}
+
+
+@pytest.mark.asyncio
+async def test_editor_can_delete_project_from_project_list(client, tmp_path):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "待删除剪辑工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="待删除剪辑工程")
+    track = await TimelineTrack.get(project=project, track_type="video")
+    path = tmp_path / "project_delete.mp4"
+    path.write_bytes(b"fake")
+    asset = await Asset.create(name="project_delete.mp4", file_path=str(path), asset_type="video", tags=["test"])
+    clip = await TimelineClip.create(track=track, asset=asset, name="project_delete.mp4", clip_type="video", duration=2)
+
+    page = await client.get("/editor")
+
+    assert page.status_code == 200
+    assert f'action="/editor/project/{project.id}/delete"' in page.text
+
+    response = await client.post(f"/editor/project/{project.id}/delete", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/editor"
+    assert await TimelineProject.filter(id=project.id).count() == 0
+    assert await TimelineTrack.filter(id=track.id).count() == 0
+    assert await TimelineClip.filter(id=clip.id).count() == 0
 
 
 @pytest.mark.asyncio
@@ -74,6 +101,62 @@ async def test_editor_can_add_sfx_clip_to_timeline(client):
     clip = await TimelineClip.get(track=sfx_track)
     assert clip.asset_id == sfx.id
     assert clip.start_time == 1.5
+
+
+@pytest.mark.asyncio
+async def test_remotion_timeline_job_uses_true_render_assets(client, tmp_path, monkeypatch):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "Remotion job 测试工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="Remotion job 测试工程")
+    video_track = await TimelineTrack.get(project=project, track_type="video")
+    first_path = tmp_path / "remotion_first.mp4"
+    second_path = tmp_path / "remotion_second.mp4"
+    first_path.write_bytes(b"fake-first")
+    second_path.write_bytes(b"fake-second")
+    first = await Asset.create(name="remotion_first.mp4", file_path=str(first_path), asset_type="video", tags=["test"])
+    second = await Asset.create(name="remotion_second.mp4", file_path=str(second_path), asset_type="video", tags=["test"])
+    await TimelineClip.create(track=video_track, asset=first, name="A", clip_type="video", duration=3, params={"fit_mode": "cover"})
+    await TimelineClip.create(
+        track=video_track,
+        asset=second,
+        name="B",
+        clip_type="video",
+        start_time=3,
+        duration=3,
+        params={
+            "fit_mode": "cover",
+            "transition": "wipeleft",
+            "transition_duration": 0.5,
+            "remotion_template_id": 4,
+            "remotion_asset_group": "transition",
+            "remotion_asset_key": "comic_panel_wipe",
+            "remotion_asset_name": "漫画分镜推入",
+        },
+    )
+    runtime_dir = tmp_path / "runtime"
+    public_dir = runtime_dir / "public"
+    bin_dir = runtime_dir / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    remotion_bin = bin_dir / "remotion"
+    remotion_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    remotion_bin.chmod(0o755)
+    monkeypatch.setattr(remotion_timeline_renderer, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(remotion_timeline_renderer, "PUBLIC_DIR", public_dir)
+    loaded = await TimelineProject.get(id=project.id).prefetch_related("tracks__clips__asset")
+
+    assert timeline_has_remotion_assets(loaded)
+    job = build_remotion_timeline_job(
+        loaded,
+        tmp_path / "remotion_out.mp4",
+        {"width": 720, "height": 1280, "fps": 30, "format": "mp4"},
+    )
+
+    assert job.props["clips"][1]["transitionKey"] == "comic_panel_wipe"
+    assert job.props["clips"][1]["transitionFrames"] == 15
+    assert "--public-dir=public" in job.command
+    assert "registerRoot(RemotionRoot)" in job.entry_file.read_text(encoding="utf-8")
+    assert "staticFile(clip.src)" in job.entry_file.read_text(encoding="utf-8")
+    assert (public_dir / f"jobs/{job.job_dir.name}/assets").exists()
 
 
 @pytest.mark.asyncio
@@ -222,6 +305,146 @@ async def test_editor_audio_webm_upload_is_classified_as_audio(client):
     asset = await Asset.get(id=data["id"])
     assert asset.asset_type == "audio"
     assert f"project:{project.id}" in asset.tags
+
+
+@pytest.mark.asyncio
+async def test_editor_can_upload_multiple_assets_at_once(client, tmp_path):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "多素材导入测试工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="多素材导入测试工程")
+    first = tmp_path / "multi_first.mp4"
+    second = tmp_path / "multi_second.jpg"
+    first.write_bytes(b"fake-video")
+    second.write_bytes(b"fake-image")
+
+    response = await client.post(
+        f"/api/editor/project/{project.id}/asset",
+        files=[
+            ("media", ("multi_first.mp4", BytesIO(b"fake-video"), "video/mp4")),
+            ("media", ("multi_second.jpg", BytesIO(b"fake-image"), "image/jpeg")),
+        ],
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["assets"]) == 2
+    asset_types = {item["asset_type"] for item in payload["assets"]}
+    assert asset_types == {"video", "image"}
+    assert await Asset.filter(name__in=["multi_first.mp4", "multi_second.jpg"]).count() == 2
+
+
+@pytest.mark.asyncio
+async def test_editor_project_assets_are_listed_in_creation_order(client, tmp_path):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "素材正序测试工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="素材正序测试工程")
+    names = ["order_1.mp4", "order_2.mp4", "order_3.mp4"]
+    for name in names:
+        path = tmp_path / name
+        path.write_bytes(b"fake")
+        await Asset.create(name=name, file_path=str(path), asset_type="video", tags=["editor", f"project:{project.id}"])
+
+    payloads = await app_main.project_editor_asset_payloads(project.id)
+    listed_names = [item["name"] for item in payloads if item["name"].startswith("order_")]
+
+    assert listed_names == names
+
+
+@pytest.mark.asyncio
+async def test_editor_add_video_uses_media_duration_from_asset_payload(client, tmp_path, monkeypatch):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "视频真实时长测试工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="视频真实时长测试工程")
+    video_track = await TimelineTrack.get(project=project, track_type="video")
+    path = tmp_path / "real_15s.mp4"
+    path.write_bytes(b"fake")
+    asset = await Asset.create(name=path.name, file_path=str(path), asset_type="video", tags=["editor", f"project:{project.id}"])
+    monkeypatch.setattr(app_main, "probe_duration", lambda incoming: 15.0 if str(incoming).endswith(path.name) else 0)
+
+    payload = app_main.asset_payload(asset)
+    response = await client.post(
+        f"/api/editor/project/{project.id}/clip",
+        data={"track_id": video_track.id, "asset_id": asset.id, "start_time": "0", "duration": str(payload["duration"])},
+    )
+
+    assert response.status_code == 200
+    clip = await TimelineClip.get(id=response.json()["clip_id"])
+    assert clip.duration == 15.0
+    assert clip.source_duration == 15.0
+
+
+@pytest.mark.asyncio
+async def test_editor_add_video_without_duration_probes_media_duration(client, tmp_path, monkeypatch):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "接口自动探测时长测试工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="接口自动探测时长测试工程")
+    video_track = await TimelineTrack.get(project=project, track_type="video")
+    path = tmp_path / "auto_probe_12s.mp4"
+    path.write_bytes(b"fake")
+    asset = await Asset.create(name=path.name, file_path=str(path), asset_type="video", tags=["editor", f"project:{project.id}"])
+    monkeypatch.setattr(app_main, "probe_duration", lambda incoming: 12.0 if str(incoming).endswith(path.name) else 0)
+
+    response = await client.post(
+        f"/api/editor/project/{project.id}/clip",
+        data={"track_id": video_track.id, "asset_id": asset.id, "start_time": "0"},
+    )
+
+    assert response.status_code == 200
+    clip = await TimelineClip.get(id=response.json()["clip_id"])
+    assert clip.duration == 12.0
+    assert clip.source_duration == 12.0
+
+
+@pytest.mark.asyncio
+async def test_editor_project_create_sequences_uploaded_videos_by_real_duration(client, monkeypatch):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    durations = iter([15.0, 7.0])
+    monkeypatch.setattr(app_main, "probe_duration", lambda incoming: next(durations))
+
+    response = await client.post(
+        "/editor/project/create",
+        data={"name": "新建工程多视频顺序测试", "canvas": "vertical"},
+        files=[
+            ("source_media", ("first.mp4", BytesIO(b"fake-video"), "video/mp4")),
+            ("source_media", ("second.mp4", BytesIO(b"fake-video"), "video/mp4")),
+        ],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    project = await TimelineProject.get(name="新建工程多视频顺序测试")
+    video_track = await TimelineTrack.get(project=project, track_type="video")
+    clips = await TimelineClip.filter(track=video_track).order_by("start_time", "id")
+    assert [clip.start_time for clip in clips] == [0, 15.0]
+    assert [clip.duration for clip in clips] == [15.0, 7.0]
+    await project.refresh_from_db()
+    assert project.duration == 22.0
+
+
+@pytest.mark.asyncio
+async def test_editor_can_delete_user_assets_but_not_system_sfx(client, tmp_path):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "素材删除权限测试工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="素材删除权限测试工程")
+    path = tmp_path / "deletable_demo.mp4"
+    path.write_bytes(b"fake")
+    asset = await Asset.create(name="deletable_demo.mp4", file_path=str(path), asset_type="video", tags=["editor"])
+
+    payloads = await app_main.project_editor_asset_payloads(project.id)
+    payload = next(item for item in payloads if item["id"] == asset.id)
+    assert payload["deletable"] is True
+
+    response = await client.post(f"/api/editor/project/{project.id}/asset/{asset.id}/delete")
+
+    assert response.status_code == 200
+    assert await Asset.filter(id=asset.id).count() == 0
+
+    sfx = await Asset.filter(asset_type="sfx").first()
+    assert sfx is not None
+    blocked = await client.post(f"/api/editor/project/{project.id}/asset/{sfx.id}/delete")
+
+    assert blocked.status_code == 400
+    assert "系统音效库素材不能删除" in blocked.text
 
 
 @pytest.mark.asyncio
@@ -2449,6 +2672,44 @@ async def test_editor_can_reorder_tracks_and_undo(client):
 
 
 @pytest.mark.asyncio
+async def test_editor_track_view_height_and_collapse_are_persisted(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "轨道视图状态测试工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="轨道视图状态测试工程")
+    track = await TimelineTrack.get(project=project, track_type="video")
+
+    response = await client.post(
+        f"/api/editor/track/{track.id}/view",
+        data={"height": "88", "collapsed": "true"},
+    )
+
+    assert response.status_code == 200
+    payload_track = next(item for item in response.json()["project"]["tracks"] if item["id"] == track.id)
+    assert payload_track["ui_height"] == 28
+    assert payload_track["ui_expanded_height"] == 88
+    assert payload_track["ui_collapsed"] is True
+
+    project = await TimelineProject.get(id=project.id)
+    assert project.timeline_meta["track_ui"][str(track.id)] == {"expanded_height": 88, "height": 28, "collapsed": True}
+
+    expand_response = await client.post(
+        f"/api/editor/track/{track.id}/view",
+        data={"collapsed": "false"},
+    )
+
+    assert expand_response.status_code == 200
+    expanded_track = next(item for item in expand_response.json()["project"]["tracks"] if item["id"] == track.id)
+    assert expanded_track["ui_height"] == 88
+    assert expanded_track["ui_expanded_height"] == 88
+    assert expanded_track["ui_collapsed"] is False
+
+    editor_response = await client.get(f"/editor/project/{project.id}")
+    assert editor_response.status_code == 200
+    assert "track-height-resize-handle" in editor_response.text
+    assert "/api/editor/track/${track.id}/view" in editor_response.text
+
+
+@pytest.mark.asyncio
 async def test_editor_reorder_tracks_rejects_incomplete_order(client):
     await client.post("/login", data={"username": "demo", "password": "demo123"})
     await client.post("/editor/project/create", data={"name": "轨道拖拽排序拒绝测试工程", "canvas": "vertical"})
@@ -2517,6 +2778,30 @@ async def test_editor_project_page_has_cleanup_tracks_control(client):
     assert response.status_code == 200
     assert 'id="cleanupTracksBtn"' in response.text
     assert "清理空轨道" in response.text
+    assert 'id="assetUpload" type="file" accept="video/*,audio/*,image/*" multiple' in response.text
+    assert "可一次导入多条视频" in response.text
+    assert 'id="selectAllAssetsBtn"' in response.text
+    assert 'id="addSelectedAssetsBtn"' in response.text
+    assert 'id="deleteSelectedAssetsBtn"' in response.text
+    assert "addAssetsToTimeline" in response.text
+    assert "shouldSelectAllAssets" in response.text
+    assert "timelineInsertStart" in response.text
+    assert "Math.max(max, Number(clip.start_time || 0) + Number(clip.duration || 0))" in response.text
+    assert "fitPixelsPerSecond" in response.text
+    assert "Math.pow(2, (timelineZoom - 50) / 22)" in response.text
+    assert "bindRulerScrollInteractions" in response.text
+    assert "scrollTimelineBy" in response.text
+    assert "主轨道（封面）" in response.text
+    assert "is-main-track" in response.text
+    assert "preview-audio-proxy" in response.text
+    assert "clip-thumb" in response.text
+    assert "editor-tooltip" in response.text
+    assert "undoProject" in response.text
+    assert "redoProject" in response.text
+    assert "event.key.toLowerCase() === 'a'" in response.text
+    assert "event.key.toLowerCase() === 'z'" in response.text
+    assert "[...uploaded].reverse().forEach" in response.text
+    assert f'action="/editor/project/{project.id}/delete"' in response.text
 
 
 @pytest.mark.asyncio
@@ -3152,3 +3437,48 @@ async def test_editor_transition_value_is_normalized(client, tmp_path):
     assert response.status_code == 200
     loaded_clip = await TimelineClip.get(id=clip.id)
     assert loaded_clip.params["transition"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_editor_clip_update_clears_remotion_transition_metadata(client, tmp_path):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    await client.post("/editor/project/create", data={"name": "Remotion 转场清除工程", "canvas": "vertical"})
+    project = await TimelineProject.get(name="Remotion 转场清除工程")
+    video_track = await TimelineTrack.get(project=project, track_type="video")
+    path = tmp_path / "clear_remotion_transition.mp4"
+    path.write_bytes(b"fake")
+    asset = await Asset.create(name="clear_remotion_transition.mp4", file_path=str(path), asset_type="video", tags=["test"])
+    clip = await TimelineClip.create(
+        track=video_track,
+        asset=asset,
+        name="clear_remotion_transition.mp4",
+        clip_type="video",
+        duration=3,
+        params={
+            "transition": "fade",
+            "transition_duration": 0.5,
+            "remotion_template_id": 12,
+            "remotion_asset_group": "transition",
+            "remotion_asset_key": "flash_cut",
+            "remotion_asset_name": "闪白切",
+        },
+    )
+
+    response = await client.post(
+        f"/api/editor/clip/{clip.id}/update",
+        data={
+            "start_time": "0",
+            "duration": "3",
+            "transition": "none",
+            "transition_duration": "0",
+            "remotion_clear_group": "transition",
+        },
+    )
+
+    assert response.status_code == 200
+    loaded_clip = await TimelineClip.get(id=clip.id)
+    assert loaded_clip.params["transition"] == "none"
+    assert loaded_clip.params["transition_duration"] == 0
+    assert "remotion_template_id" not in loaded_clip.params
+    assert "remotion_asset_group" not in loaded_clip.params
+    assert "remotion_asset_key" not in loaded_clip.params

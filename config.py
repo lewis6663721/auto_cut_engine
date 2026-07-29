@@ -13,7 +13,7 @@ load_dotenv(BASE_DIR / ".env")
 
 
 class Settings(BaseSettings):
-    app_name: str = "AutoCut Engine"
+    app_name: str = "剪·AI"
     app_env: str = "development"
     database_url: str = os.getenv("MYSQL_URL", "sqlite://db.sqlite3")
     redis_url: str = "redis://localhost:6379/0"
@@ -23,13 +23,18 @@ class Settings(BaseSettings):
     use_celery: bool = False
     secret_key: str = "change-me"
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = 360
     media_root: str = "./media"
     dashscope_api_key: str | None = None
     transfer_api_key: str | None = None
     ai_base_url: str = "https://api.aifoxspa.com"
     ai_model: str = "gpt-5.4-mini"
     ai_remote_enabled: bool = True
+    openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
+    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
+    sedance_api_key: str | None = os.getenv("SEDANCE_API_KEY")
+    sedance_base_url: str = os.getenv("SEDANCE_BASE_URL", "")
+    remotion_render_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -71,5 +76,5 @@ settings = Settings()
 
 
 def ensure_media_dirs() -> None:
-    for name in ("uploads", "results", "creative", "sfx", "previews", "freezes"):
+    for name in ("uploads", "results", "creative", "sfx", "previews", "freezes", "remotion", "effects"):
         (settings.media_path / name).mkdir(parents=True, exist_ok=True)

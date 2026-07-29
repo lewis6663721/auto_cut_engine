@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-3xl">
+  <a href="/toolkit" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回剪辑工具包</a>
+  <h1 class="page-title mt-3 font-black text-white">视频拼接</h1>
+  <form class="soft-card tool-card mt-8 grid gap-5 p-6" action="/toolkit/concat-videos" method="post" enctype="multipart/form-data">
+    <label class="tool-field">视频文件
+      <input name="videos" type="file" accept="video/*" multiple required>
+    </label>
+    <div class="tool-hint">按文件选择顺序拼接，建议上传同分辨率、同编码的视频。</div>
+    <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">开始拼接</button>
+  </form>
+</section>
+{% endblock %}
