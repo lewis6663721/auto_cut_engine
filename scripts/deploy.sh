@@ -27,6 +27,10 @@ rsync -az --delete \
   --exclude 'media/creative/*' \
   --exclude 'media/previews/*' \
   --exclude 'media/freezes/*' \
+  --exclude 'media/sfx/*' \
+  --exclude 'media/effects/*' \
+  --exclude 'media/remotion/*' \
+  --exclude 'media/tmp/*' \
   -e "ssh -p $SERVER_PORT" \
   "$LOCAL_ROOT/" "$SERVER_USER@$SERVER_HOST:$REMOTE_DIR/"
 
