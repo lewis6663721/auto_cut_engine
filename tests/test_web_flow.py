@@ -8,7 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from models import AiProviderCredential, Asset, RemotionTemplate, RenderTask, Template, TimelineProject, User
+from models import AiProviderCredential, Asset, EntertainmentLog, RemotionTemplate, RenderTask, Template, TimelineProject, User
+from render_engine.entertainment import build_baby_name_prompt, build_name_rule_report, build_name_score_prompt, merge_ai_name_result
 
 
 @pytest.mark.asyncio
@@ -45,11 +46,294 @@ async def test_home_alias_and_favicon_render(client):
     assert response.status_code == 200
     assert "剪·AI" in response.text
     assert "项目功能" in response.text
+    assert "娱乐广场" in response.text
     assert "floatingAiAssistant" not in response.text
 
     favicon = await client.get("/favicon.ico")
     assert favicon.status_code == 200
     assert favicon.headers["content-type"].startswith("image/png")
+
+
+@pytest.mark.asyncio
+async def test_entertainment_pages_are_guest_accessible(client):
+    plaza = await client.get("/entertainment")
+    name_score = await client.get("/entertainment/name-score")
+    baby_names = await client.get("/entertainment/baby-names")
+    assert plaza.status_code == 200
+    assert name_score.status_code == 200
+    assert baby_names.status_code == 200
+    assert "娱乐广场" in plaza.text
+    assert "名字打分" in name_score.text
+    assert "宝宝起名" in plaza.text
+    assert plaza.text.count("/entertainment/baby-names") == 1
+    assert "宝宝起名" in baby_names.text
+    assert "qwen3.7-plus" in name_score.text
+    assert "gpt-5.6-sol" in name_score.text
+    assert "scoreBirthYear" in name_score.text
+    assert "scoreBirthMonth" in name_score.text
+    assert "scoreBirthDay" in name_score.text
+    assert "scoreBirthHour" in name_score.text
+    assert 'type="datetime-local"' not in name_score.text
+    assert "/static/js/entertainment.js" in name_score.text
+    script = await client.get("/static/js/entertainment.js")
+    assert script.status_code == 200
+    assert "/api/entertainment/provider/heartbeat" in script.text
+    assert "/api/entertainment/name-score" in script.text
+    assert "/api/entertainment/baby-names" in script.text
+    assert "initBirthPicker" in script.text
+    assert "initBabyNames" in script.text
+    assert "babyNameList" in baby_names.text
+    assert "babyNameLength" in baby_names.text
+    assert "姓名字数" in baby_names.text
+    assert "data-guest-provider-toggle" in plaza.text
+    assert "data-guest-provider-toggle" in name_score.text
+    assert "data-guest-provider-toggle" in baby_names.text
+    assert "guest-provider-body" in plaza.text
+    assert "PROVIDER_COLLAPSED_KEY" in script.text
+    assert "textList(advanced.preferred_elements)" in script.text
+    assert "scoreAdvancedBox" in name_score.text
+    assert "renderAdvancedAnalysis" in script.text
+
+
+@pytest.mark.asyncio
+async def test_entertainment_name_score_requires_guest_api_key(client):
+    response = await client.post(
+        "/api/entertainment/name-score",
+        json={
+            "provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.7-plus",
+            "name": "李明泽",
+            "gender": "male",
+        },
+    )
+    assert response.status_code == 400
+    assert "游客模式" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_entertainment_guest_calls_are_logged_for_admin_only(client, monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        text = "{}"
+        url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "base_score": 84,
+                                    "adjustment": 0,
+                                    "final_score": 84,
+                                    "summary": "中上吉名，音形义较稳。",
+                                    "dimensions": {},
+                                    "possible_imagery": ["来源/依据：《说文解字》与现代字义，可联想到清朗水泽。"],
+                                    "risks": [],
+                                    "formal_usability_note": "适合正式证件场景。",
+                                    "advanced": None,
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ],
+                "usage": {"total_tokens": 88},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers=None, json=None):
+            return FakeResponse()
+
+    monkeypatch.setattr("main.httpx.AsyncClient", FakeAsyncClient)
+    response = await client.post(
+        "/api/entertainment/name-score",
+        json={
+            "provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.7-plus",
+            "api_key": "sk-user-secret",
+            "name": "李明泽",
+            "gender": "male",
+            "mode": "basic",
+        },
+    )
+
+    assert response.status_code == 200
+    log = await EntertainmentLog.get(tool_key="name_score")
+    assert log.success is True
+    assert log.provider_key == "qwen"
+    assert log.model == "qwen3.7-plus"
+    assert log.request_payload["api_key"] == "[已隐藏敏感字段]"
+    assert "sk-user-secret" not in json.dumps(log.request_payload, ensure_ascii=False)
+    assert log.usage["total_tokens"] == 88
+
+    anonymous = await client.get("/admin/entertainment-logs", follow_redirects=False)
+    assert anonymous.status_code == 303
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    forbidden = await client.get("/admin/entertainment-logs")
+    assert forbidden.status_code == 403
+    await client.get("/logout")
+    await client.post("/login", data={"username": "admin", "password": "admin123"})
+    admin_page = await client.get("/admin/entertainment-logs")
+    assert admin_page.status_code == 200
+    assert "娱乐广场日志" in admin_page.text
+    assert "名字打分" in admin_page.text
+    assert "李明泽" in admin_page.text
+    assert "sk-user-secret" not in admin_page.text
+    assert "[已隐藏敏感字段]" in admin_page.text
+
+
+def test_name_score_rule_rejects_meaningless_repeated_chars():
+    bad = build_name_rule_report(name="啊啊啊", gender="unknown", mode="basic")
+    good = build_name_rule_report(name="李明泽", gender="male", mode="basic")
+
+    expected_dimensions = {"phonology", "glyph", "meaning", "recognition", "usability", "gender_fit", "culture"}
+    assert expected_dimensions <= set(good["dimensions"])
+    assert expected_dimensions <= set(good["score_detail"]["weighted_breakdown"])
+    assert good["score_detail"]["weighted_breakdown"]["meaning"]["max_points"] == 20
+    assert good["score_detail"]["weighted_breakdown"]["meaning"]["points"] == round(good["dimensions"]["meaning"]["score"] * 0.20, 1)
+    assert good["score_detail"]["final_score"] == good["score"]
+    assert bad["score"] <= 30
+    assert bad["quality_gate"]["score_cap"] <= 25
+    assert bad["score_detail"]["quality_penalty"] > 0
+    assert any("重复" in item or "语气词" in item for item in bad["quality_gate"]["issues"])
+    assert good["score"] > bad["score"] + 35
+    assert good["dimensions"]["meaning"]["score"] > bad["dimensions"]["meaning"]["score"]
+
+    merged = merge_ai_name_result(bad, {"score_adjustment": 5, "summary": "这个名字很好", "cautions": []})
+    assert merged["score"] <= 5
+    assert merged["base_score"] == bad["score"]
+    assert merged["score_adjustment"] == 5
+    assert merged["score_source"] == "rule_engine_plus_ai_adjustment"
+    assert merged["verdict"] == "不建议作为正式姓名"
+    assert "不像一个适合正式使用的姓名" in merged["summary"]
+
+
+def test_name_score_rule_penalizes_homophone_and_culture_risks():
+    risky = build_name_rule_report(name="史珍香", gender="unknown", mode="basic")
+    normal = build_name_rule_report(name="李明泽", gender="male", mode="basic")
+
+    assert risky["score"] <= 45
+    assert risky["score_detail"]["score_cap"] <= 48
+    assert normal["score"] > risky["score"] + 30
+    assert risky["dimensions"]["culture"]["score"] < normal["dimensions"]["culture"]["score"]
+    assert risky["dimensions"]["usability"]["score"] < normal["dimensions"]["usability"]["score"]
+    assert any("谐音" in item for item in risky["quality_gate"]["issues"])
+
+
+def test_name_score_rule_uses_gender_fit_dimension():
+    male = build_name_rule_report(name="杨强", gender="male", mode="basic")
+    female = build_name_rule_report(name="杨强", gender="female", mode="basic")
+    unknown = build_name_rule_report(name="杨强", gender="unknown", mode="basic")
+
+    assert male["dimensions"]["gender_fit"]["score"] >= 85
+    assert female["dimensions"]["gender_fit"]["score"] <= 40
+    assert male["score"] >= female["score"] + 12
+    assert unknown["score"] > female["score"]
+    assert any("性别" in item for item in female["quality_gate"]["issues"])
+
+
+def test_name_score_rule_handles_common_surname_and_meaning_chars():
+    female = build_name_rule_report(name="曾芊墨", gender="female", mode="basic")
+    male = build_name_rule_report(name="曾芊墨", gender="male", mode="basic")
+    merged = merge_ai_name_result(
+        female,
+        {
+            "base_score": female["score"],
+            "adjustment": 0,
+            "summary": "中上吉名，气质文雅。",
+            "possible_imagery": ["草木繁盛的生机与柔韧", "兼具审美意趣与深厚学养", "温婉而不失书卷气"],
+        },
+    )
+
+    assert female["score"] >= 80
+    assert female["surname"] == "曾"
+    assert female["dimensions"]["meaning"]["score"] >= 80
+    assert female["dimensions"]["gender_fit"]["score"] >= 85
+    assert any("草木繁盛" in item for item in female["dimensions"]["meaning"]["details"]["positive_meanings"])
+    assert not any("姓氏不在常见中文姓氏表" in item for item in female["quality_gate"]["issues"])
+    assert female["score"] >= male["score"] + 12
+    assert any("《说文解字》" in item and "草木繁盛" in item for item in merged["source_notes"])
+    assert any("翰墨" in item or "笔墨" in item for item in merged["source_notes"])
+
+
+def test_name_score_prompt_has_strict_schema_by_mode():
+    basic = build_name_score_prompt(build_name_rule_report(name="曾芊墨", gender="female", mode="basic"))
+    advanced = build_name_score_prompt(
+        build_name_rule_report(name="曾芊墨", gender="female", mode="advanced", birth_datetime="2026-07-30T09:00")
+    )
+
+    assert "# Role: 中文姓名专业测评解析器" in basic
+    assert "Output Schema (Strict JSON)" in basic
+    assert "possible_imagery 的每一项都必须写清" in basic
+    assert "base_score 必须严格等于输入" in basic
+    assert "basic模式不返回命理适配key" not in basic
+    assert '"命理适配"' not in basic
+    assert '"advanced": null' in basic
+    assert '"命理适配"' in advanced
+    assert '"wuxing_analysis"' in advanced
+    assert '"yongshen_note"' in advanced
+    assert '"name_element_support"' in advanced
+    assert "易经、五行、八字" in advanced
+    assert "喜用神" in advanced
+
+
+def test_name_score_merge_ignores_mismatched_model_base_score():
+    report = build_name_rule_report(name="曾芊墨", gender="female", mode="basic")
+    merged = merge_ai_name_result(
+        report,
+        {
+            "base_score": 1,
+            "adjustment": 5,
+            "final_score": 6,
+            "summary": "模型返回了错误基础分",
+            "dimensions": {"命理适配": {"level": "优", "comment": "basic模式不应返回"}},
+            "advanced": {"wuxing_analysis": "basic模式不应返回"},
+        },
+    )
+
+    assert merged["score"] == report["score"]
+    assert merged["score_adjustment"] == 0
+    assert "base_score" in merged["adjustment_reason"]
+    assert "命理适配" not in merged["ai_dimensions"]
+    assert merged["advanced"] is None
+
+
+def test_baby_name_prompt_respects_source_mode_and_name_length():
+    basic = build_baby_name_prompt(surname="王", gender="female", mode="basic", name_length=2, source_preference="滕王阁序")
+    advanced = build_baby_name_prompt(
+        surname="王",
+        gender="female",
+        mode="advanced",
+        name_length=3,
+        birth_datetime="2026-07-30T09:00",
+        source_preference="滕王阁序",
+    )
+
+    assert "必须严格结合该来源" in basic
+    assert "滕王阁序" in basic
+    assert "姓名总字数必须严格为 2 个字" in basic
+    assert "名字部分必须严格为 1 个字" in basic
+    assert "不得出现八字、五行、喜用神" in basic
+    assert "必须输出最合适的 10 个姓名" in basic
+    assert "姓名总字数必须严格为 3 个字" in advanced
+    assert "喜用神" in advanced
+    assert "wuxing_note 必须是字符串" in advanced
 
 
 @pytest.mark.asyncio
@@ -378,6 +662,216 @@ async def test_ai_chat_api_uses_openai_compatible_payload(client, monkeypatch):
     content = captured["json"]["messages"][-1]["content"]
     assert content[0] == {"type": "text", "text": "帮我设计剪辑方案"}
     assert content[1]["type"] == "image_url"
+
+
+@pytest.mark.asyncio
+async def test_entertainment_name_score_uses_guest_provider_payload(client, monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "name": "李明泽",
+                                    "mode": "advanced",
+                                    "base_score": 78,
+                                    "adjustment": 3,
+                                    "final_score": 81,
+                                    "adjustment_reason": "音义协调且正式使用风险较低，小幅上调。",
+                                    "summary": "音义较协调，适合保留。",
+                                    "dimensions": {
+                                        "音韵": {"level": "良好", "comment": "读感清亮。"},
+                                        "字形": {"level": "良好", "comment": "书写平衡。"},
+                                        "字义寓意": {"level": "优秀", "comment": "寓意积极。"},
+                                        "辨识度": {"level": "良好", "comment": "不算过度俗套。"},
+                                        "正式可用性": {"level": "良好", "comment": "适合证件和介绍。"},
+                                        "文化联想": {"level": "良好", "comment": "无明显谐音雷区。"},
+                                        "命理适配": {"level": "良好", "comment": "五行适配只作传统文化参考。"},
+                                    },
+                                    "possible_imagery": ["可联想到泽被万物的意象"],
+                                    "risks": ["需确认方言读音"],
+                                    "formal_usability_note": "可补充家族偏好再复核。",
+                                    "advanced": {
+                                        "bazi_overview": "八字五行分布较平和。",
+                                        "wuxing_analysis": "五行适配只作娱乐参考。",
+                                        "yongshen_note": "喜用神参考以偏弱五行为准。",
+                                        "name_element_support": "姓名用字对偏弱五行有一定补益。",
+                                        "balance_note": "不作命运预测，仅作传统文化解释。",
+                                        "bazi_fit_level": "中等适配",
+                                        "classical_reference": "无明确典籍出处",
+                                    },
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ],
+                "usage": {"total_tokens": 88},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers=None, json=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("main.httpx.AsyncClient", FakeAsyncClient)
+    response = await client.post(
+        "/api/entertainment/name-score",
+        json={
+            "provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.7-plus",
+            "api_key": "sk-user",
+            "name": "李明泽",
+            "gender": "male",
+            "mode": "advanced",
+            "birth_datetime": "2026-07-30T09:30",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["model"] == "qwen3.7-plus"
+    assert data["result"]["score"] == min(100, data["result"]["base_score"] + 3)
+    assert data["result"]["score_adjustment"] == 3
+    assert data["result"]["adjustment_reason"] == "音义协调且正式使用风险较低，小幅上调。"
+    assert data["result"]["score_source"] == "rule_engine_plus_ai_adjustment"
+    assert data["result"]["rule_report"]["mode"] == "advanced"
+    assert "bazi" in data["result"]["rule_report"]["dimensions"]
+    assert "命理适配" in data["result"]["ai_dimensions"]
+    assert data["result"]["advanced"]["bazi_fit_level"] == "中等适配"
+    assert "喜用神" in data["result"]["advanced"]["yongshen_note"]
+    assert "不作命运预测" in data["result"]["advanced"]["balance_note"]
+    assert captured["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer sk-user"
+    assert captured["json"]["model"] == "qwen3.7-plus"
+    assert "李明泽" in captured["json"]["messages"][-1]["content"]
+    assert "Output Schema (Strict JSON)" in captured["json"]["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_entertainment_baby_names_uses_guest_provider_payload(client, monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            given_names = ["云舒", "清扬", "星遥", "明瑾", "知微", "景宁", "嘉言", "安澜", "若华", "书远"]
+            names = [
+                {
+                    "rank": index,
+                    "full_name": f"王{given}",
+                    "given_name": given,
+                    "score_hint": 86,
+                    "source": "来源/依据：用户指定《滕王阁序》的云水意象。",
+                    "reason": "承接滕王阁序的开阔意象，读写稳定。",
+                    "phonology": "读音顺口。",
+                    "glyph": "字形清楚。",
+                    "meaning": "寓意开阔。",
+                    "recognition": "辨识度适中。",
+                    "formal_usability": "适合证件使用。",
+                    "cultural_imagery": "可联想到云水与高阁。",
+                    "wuxing_note": "水意象较明显，可作偏弱五行参考。",
+                    "risks": [],
+                }
+                for index, given in enumerate(given_names, start=1)
+            ]
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "surname": "王",
+                                    "gender": "female",
+                                    "mode": "advanced",
+                                    "source_used": "滕王阁序",
+                                    "summary": "已结合滕王阁序生成候选名。",
+                                    "names": names,
+                                    "advanced": {
+                                        "birth_datetime": "2026-07-30T09:00",
+                                        "bazi_overview": "五行分布近似平和。",
+                                        "preferred_elements": ["水", "木"],
+                                        "naming_strategy": "以水木意象增强清朗生发感。",
+                                        "disclaimer": "仅作传统文化参考，不作命运预测。",
+                                    },
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ],
+                "usage": {"total_tokens": 188},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, headers=None, json=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("main.httpx.AsyncClient", FakeAsyncClient)
+    response = await client.post(
+        "/api/entertainment/baby-names",
+        json={
+            "provider": "qwen",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.7-plus",
+            "api_key": "sk-user",
+            "surname": "王",
+            "name_length": 3,
+            "gender": "female",
+            "mode": "advanced",
+            "birth_datetime": "2026-07-30T09:00",
+            "source_preference": "滕王阁序",
+            "style_preference": "清雅，大气",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["result"]["source_used"] == "滕王阁序"
+    assert data["result"]["name_length"] == 3
+    assert len(data["result"]["names"]) == 10
+    assert all(len(item["full_name"]) == 3 for item in data["result"]["names"])
+    assert data["result"]["names"][0]["full_name"].startswith("王")
+    assert "滕王阁序" in data["result"]["names"][0]["source"]
+    assert data["result"]["advanced"]["preferred_elements"] == ["水", "木"]
+    assert captured["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer sk-user"
+    assert "滕王阁序" in captured["json"]["messages"][-1]["content"]
+    assert "姓名总字数必须严格为 3 个字" in captured["json"]["messages"][-1]["content"]
+    assert "必须输出最合适的 10 个姓名" in captured["json"]["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio

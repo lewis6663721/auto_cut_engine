@@ -5,12 +5,19 @@
 未登录用户只能访问：
 
 - `/`
+- `/home`
+- `/entertainment`
+- `/entertainment/name-score`
+- `/entertainment/baby-names`
+- `/api/entertainment/provider/heartbeat`
+- `/api/entertainment/name-score`
+- `/api/entertainment/baby-names`
 - `/login`
 - `/register`
 - `/healthz`
 - `/static/*`
 
-其它业务页面会跳转到登录页，并携带 `next` 参数。登录成功后自动回到原页面。
+娱乐广场游客接口必须由用户填写自己的 API Key，后端会记录脱敏后的调用日志。其它业务页面会跳转到登录页，并携带 `next` 参数。登录成功后自动回到原页面。
 
 ## API 访问规则
 
@@ -25,7 +32,13 @@
 | 角色 | 权限 |
 |---|---|
 | 普通用户 | 只能查看和操作自己的任务、工程、素材 |
-| 管理员 | 可查看全部任务和工程，可管理模板、维度和专家经验模板化 |
+| 管理员 | 可查看全部任务和工程，可管理模板、维度、专家经验模板化和娱乐广场游客调用日志 |
+
+## 管理员专属日志
+
+- `/admin/entertainment-logs` 仅管理员可访问。
+- 日志包含游客调用的工具、Provider、模型、耗时、状态、脱敏请求参数、上游模型请求和响应。
+- API Key、Token、密码、Base64、二进制和超长文本会隐藏、摘要化或截断，避免泄露敏感信息和拖慢页面。
 
 ## 默认账号
 

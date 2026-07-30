@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="entertainment-page">
+  <div class="entertainment-hero">
+    <div>
+      <span class="entertainment-kicker">Guest AI Playground</span>
+      <h1 class="page-title mt-4 font-black text-white">娱乐广场</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">轻量、有趣、可分享的小工具集合。游客可直接使用，但需要填写自己的大模型 API Key。</p>
+    </div>
+  </div>
+
+  <section class="guest-provider-panel" data-guest-provider-panel>
+    <div class="guest-provider-head">
+      <div>
+        <strong>游客模型配置</strong>
+        <span>这里配置一次，后续娱乐小工具复用当前浏览器配置。</span>
+      </div>
+      <div class="guest-provider-actions">
+        <button class="muted-button guest-provider-test" type="button" data-guest-provider-test>连通性测试</button>
+        <button class="muted-button guest-provider-toggle" type="button" data-guest-provider-toggle>收起配置</button>
+      </div>
+    </div>
+    <div class="guest-provider-body" data-guest-provider-body>
+      <div class="guest-provider-grid">
+        <label>
+          <span>供应商</span>
+          <select data-guest-provider>
+            {% for provider in providers %}
+              <option value="{{ provider.key }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.default_model }}" data-model-options='{{ provider.model_options | tojson }}'>{{ provider.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>模型</span>
+          <select data-guest-model></select>
+        </label>
+        <label>
+          <span>Base URL</span>
+          <input data-guest-base-url placeholder="https://api.openai.com/v1">
+        </label>
+        <label>
+          <span>API Key</span>
+          <input data-guest-api-key type="password" placeholder="sk-...">
+        </label>
+      </div>
+      <label class="guest-custom-model">
+        <span>其他模型</span>
+        <input data-guest-custom-model placeholder="下拉没有时填写，例如你的网关模型名">
+      </label>
+      <p class="guest-provider-status" data-guest-provider-status>API Key 只在本浏览器保存，用于本次游客调用。</p>
+    </div>
+  </section>
+
+  <div class="entertainment-dock">
+    <a class="entertainment-tool-card is-ready" href="/entertainment/name-score">
+      <span><i data-lucide="sparkles"></i></span>
+      <strong>名字打分</strong>
+      <p>输入姓名，基础版按音韵、字形、字义、辨识度、正式可用性、性别适配和文化联想评分。</p>
+    </a>
+    <a class="entertainment-tool-card is-ready" href="/entertainment/baby-names">
+      <span><i data-lucide="baby"></i></span>
+      <strong>宝宝起名</strong>
+      <p>输入姓氏和来源偏好，生成 10 个候选名；进阶版结合出生年月日时做五行参考。</p>
+    </a>
+  </div>
+</section>
+<script src="/static/js/entertainment.js?v=20260730-baby-result-fix"></script>
+{% endblock %}

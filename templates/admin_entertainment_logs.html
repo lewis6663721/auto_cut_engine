@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="glass rounded-md p-5">
+  <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-semibold">娱乐广场日志</h1>
+      <p class="mt-2 text-sm text-slate-500">仅管理员可见。API Key、Token、Base64 和超长内容会自动脱敏或截断。</p>
+    </div>
+    <a href="/admin" class="rounded border border-slate-700 px-4 py-2 text-sm">返回后台</a>
+  </div>
+
+  <form method="get" action="/admin/entertainment-logs" class="panel mb-4 grid gap-3 rounded-md p-4 md:grid-cols-[1fr_1fr_auto]">
+    <label class="grid gap-2 text-sm text-slate-400">
+      <span>工具</span>
+      <select name="tool" class="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100">
+        {% for key, label in tool_options %}
+          <option value="{{ key }}" {% if key == tool %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="grid gap-2 text-sm text-slate-400">
+      <span>状态</span>
+      <select name="status" class="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100">
+        {% for key, label in status_options %}
+          <option value="{{ key }}" {% if key == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="flex items-end">
+      <button class="rounded bg-cyan-400 px-5 py-2 text-sm font-semibold text-slate-950">筛选</button>
+    </div>
+  </form>
+
+  <div class="mb-3 text-sm text-slate-500">共 {{ total }} 条，当前第 {{ page }} 页。</div>
+
+  <div class="space-y-3">
+    {% for row in rows %}
+      {% set log = row.log %}
+      <article class="panel rounded-md p-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div class="flex flex-wrap items-center gap-2">
+              <strong>{{ log.tool_name or log.tool_key }}</strong>
+              <span class="rounded px-2 py-1 text-xs font-semibold {% if log.success %}bg-emerald-400/15 text-emerald-300{% else %}bg-rose-400/15 text-rose-300{% endif %}">
+                {{ "成功" if log.success else "失败" }}
+              </span>
+              <span class="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300">HTTP {{ log.status_code or "-" }}</span>
+              <span class="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300">{{ log.duration_ms }}ms</span>
+            </div>
+            <div class="mt-2 text-sm text-slate-500">
+              #{{ log.id }} · {{ log.provider_key or "-" }} / {{ log.model or "-" }} · {{ log.created_at.strftime("%Y-%m-%d %H:%M:%S") if log.created_at else "" }}
+            </div>
+            <div class="mt-1 text-xs text-slate-600">{{ log.endpoint }} · {{ log.ip_address or "-" }}</div>
+          </div>
+          <div class="max-w-xl text-right text-xs text-slate-500">
+            {{ log.base_url or "-" }}
+          </div>
+        </div>
+
+        {% if log.error_message %}
+          <div class="mt-3 rounded border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-200">{{ log.error_message }}</div>
+        {% endif %}
+
+        <div class="mt-4 grid gap-3 lg:grid-cols-2">
+          <details class="rounded border border-slate-800 bg-slate-950/60 p-3">
+            <summary class="cursor-pointer text-sm font-semibold text-slate-300">页面请求参数</summary>
+            <pre class="mt-3 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-400">{{ row.request_json }}</pre>
+          </details>
+          <details class="rounded border border-slate-800 bg-slate-950/60 p-3">
+            <summary class="cursor-pointer text-sm font-semibold text-slate-300">上游模型请求</summary>
+            <pre class="mt-3 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-400">{{ row.upstream_json }}</pre>
+          </details>
+          <details class="rounded border border-slate-800 bg-slate-950/60 p-3 lg:col-span-2">
+            <summary class="cursor-pointer text-sm font-semibold text-slate-300">响应内容</summary>
+            <pre class="mt-3 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-400">{{ row.response_json }}</pre>
+          </details>
+          <details class="rounded border border-slate-800 bg-slate-950/60 p-3 lg:col-span-2">
+            <summary class="cursor-pointer text-sm font-semibold text-slate-300">Token / Usage</summary>
+            <pre class="mt-3 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-400">{{ row.usage_json }}</pre>
+          </details>
+        </div>
+      </article>
+    {% else %}
+      <div class="panel rounded-md p-8 text-center text-slate-500">暂无娱乐广场调用日志。</div>
+    {% endfor %}
+  </div>
+
+  <div class="mt-5 flex items-center justify-between text-sm">
+    {% set prev_page = page - 1 %}
+    {% set next_page = page + 1 %}
+    <a class="rounded border border-slate-700 px-4 py-2 {% if page <= 1 %}pointer-events-none opacity-40{% endif %}" href="/admin/entertainment-logs?tool={{ tool }}&status={{ status }}&page={{ prev_page }}">上一页</a>
+    <a class="rounded border border-slate-700 px-4 py-2 {% if page * page_size >= total %}pointer-events-none opacity-40{% endif %}" href="/admin/entertainment-logs?tool={{ tool }}&status={{ status }}&page={{ next_page }}">下一页</a>
+  </div>
+</section>
+{% endblock %}

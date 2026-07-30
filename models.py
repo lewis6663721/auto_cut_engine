@@ -45,6 +45,30 @@ class AiProviderCredential(Model, TimestampMixin):
         unique_together = (("user", "provider_key", "label"),)
 
 
+class EntertainmentLog(Model, TimestampMixin):
+    id = fields.IntField(primary_key=True)
+    tool_key = fields.CharField(max_length=64)
+    tool_name = fields.CharField(max_length=120, default="")
+    endpoint = fields.CharField(max_length=160)
+    provider_key = fields.CharField(max_length=64, default="")
+    model = fields.CharField(max_length=160, default="")
+    base_url = fields.CharField(max_length=500, default="")
+    request_payload = fields.JSONField(default=dict)
+    upstream_payload = fields.JSONField(default=dict)
+    response_payload = fields.JSONField(default=dict)
+    usage = fields.JSONField(default=dict)
+    status_code = fields.IntField(null=True)
+    success = fields.BooleanField(default=False)
+    error_message = fields.TextField(default="")
+    duration_ms = fields.IntField(default=0)
+    ip_address = fields.CharField(max_length=80, default="")
+    user_agent = fields.CharField(max_length=500, default="")
+
+    class Meta:
+        table = "ace_entertainment_logs"
+        ordering = ["-created_at"]
+
+
 class Template(Model, TimestampMixin):
     id = fields.IntField(primary_key=True)
     name = fields.CharField(max_length=120)

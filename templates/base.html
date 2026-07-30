@@ -9,7 +9,7 @@
   <meta name="application-name" content="{{ site_name or '剪·AI' }}">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/css/app.css?v=20260728-effect-asset-upload">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260730-entertainment">
 </head>
 <body class="min-h-screen text-slate-100">
   <header class="sticky top-0 z-40 app-nav">
@@ -20,6 +20,7 @@
       </a>
       <div class="nav-menu">
         <a class="nav-link" href="/">首页</a>
+        <a class="nav-link" href="/entertainment">娱乐广场</a>
         <div class="nav-group">
           <button class="nav-group-button" type="button" aria-haspopup="true">创作工作台<i data-lucide="chevron-down"></i></button>
           <div class="nav-dropdown">
@@ -47,6 +48,7 @@
             <a href="/account"><i data-lucide="user-cog"></i><span>用户中心</span></a>
             {% if user.is_admin %}
             <a href="/admin"><i data-lucide="settings"></i><span>管理后台</span></a>
+            <a href="/admin/entertainment-logs"><i data-lucide="file-search"></i><span>娱乐日志</span></a>
             {% endif %}
           </div>
         </div>

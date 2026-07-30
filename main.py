@@ -25,7 +25,7 @@ from fastapi.templating import Jinja2Templates
 from auth import current_user, hash_password, login_response, logout_response, require_admin, require_user, safe_next_url, verify_password
 from config import BASE_DIR, ensure_media_dirs, settings
 from database import close_db, init_db
-from models import Asset, CreativeWork, EditDetail, RemotionTemplate, RenderTask, Template, TimelineClip, TimelineProject, TimelineTrack, User
+from models import Asset, CreativeWork, EditDetail, EntertainmentLog, RemotionTemplate, RenderTask, Template, TimelineClip, TimelineProject, TimelineTrack, User
 from models import AiProviderCredential
 from render_engine.ai_providers import (
     CAPABILITY_LABELS,
@@ -46,6 +46,16 @@ from render_engine.dimension_registry import (
     get_dimension_registry,
     normalize_config,
     seed_dimensions,
+)
+from render_engine.entertainment import (
+    build_baby_name_prompt,
+    build_fallback_ai_result,
+    build_name_rule_report,
+    build_name_score_prompt,
+    entertainment_provider_presets,
+    merge_ai_name_result,
+    normalize_baby_name_result,
+    parse_json_object,
 )
 from render_engine.pipeline import render_task
 from render_engine.scene_detector import probe_duration
@@ -1111,6 +1121,255 @@ async def _landing_context(request: Request, **extra: Any) -> dict[str, Any]:
 @app.get("/home", response_class=HTMLResponse)
 async def home(request: Request):
     return render(request, "home.html", **await _landing_context(request, title=settings.app_name))
+
+
+@app.get("/entertainment", response_class=HTMLResponse)
+async def entertainment_home(request: Request):
+    return render(
+        request,
+        "entertainment.html",
+        **await view_context(request, providers=entertainment_provider_presets(), title=f"{settings.app_name} · 娱乐广场"),
+    )
+
+
+@app.get("/entertainment/name-score", response_class=HTMLResponse)
+async def entertainment_name_score_page(request: Request):
+    return render(
+        request,
+        "entertainment_name_score.html",
+        **await view_context(request, providers=entertainment_provider_presets(), title=f"{settings.app_name} · 名字打分"),
+    )
+
+
+@app.get("/entertainment/baby-names", response_class=HTMLResponse)
+async def entertainment_baby_names_page(request: Request):
+    return render(
+        request,
+        "entertainment_baby_names.html",
+        **await view_context(request, providers=entertainment_provider_presets(), title=f"{settings.app_name} · 宝宝起名"),
+    )
+
+
+def resolve_guest_provider_payload(data: dict[str, Any]) -> dict[str, str]:
+    providers = {item["key"]: item for item in entertainment_provider_presets()}
+    provider_key = str(data.get("provider") or "qwen").strip()
+    provider = providers.get(provider_key) or providers["qwen"]
+    base_url = str(data.get("base_url") or provider.get("base_url") or "").strip().rstrip("/")
+    model = str(data.get("model") or provider.get("default_model") or "").strip()
+    api_key = str(data.get("api_key") or "").strip()
+    if not api_key:
+        raise HTTPException(400, "游客模式需要填写你自己的 API Key，避免消耗平台额度。")
+    if not base_url:
+        raise HTTPException(400, "缺少 Base URL。")
+    if not model:
+        raise HTTPException(400, "缺少模型名称。")
+    return {"provider_key": provider_key, "base_url": base_url, "model": model, "api_key": api_key}
+
+
+@app.post("/api/entertainment/provider/heartbeat")
+async def api_entertainment_provider_heartbeat(request: Request):
+    started_at = datetime.now(timezone.utc)
+    data = await request.json()
+    provider: dict[str, str] | None = None
+    try:
+        provider = resolve_guest_provider_payload(data)
+        result = await check_provider_health(
+            base_url=provider["base_url"],
+            api_key=provider["api_key"],
+            model=provider["model"],
+            capability="chat",
+            provider_key=provider["provider_key"],
+            timeout=20,
+        )
+        await record_entertainment_log(
+            request,
+            tool_key="provider_heartbeat",
+            request_payload=data,
+            provider=provider,
+            response_payload=result,
+            status_code=200,
+            success=bool(result.get("ok")),
+            error_message="" if result.get("ok") else str(result.get("message") or result.get("detail") or ""),
+            started_at=started_at,
+        )
+        return result
+    except Exception as exc:
+        await record_entertainment_log(
+            request,
+            tool_key="provider_heartbeat",
+            request_payload=data,
+            provider=provider,
+            status_code=exc.status_code if isinstance(exc, HTTPException) else None,
+            success=False,
+            error_message=str(exc.detail if isinstance(exc, HTTPException) else exc),
+            started_at=started_at,
+        )
+        raise
+
+
+@app.post("/api/entertainment/name-score")
+async def api_entertainment_name_score(request: Request):
+    started_at = datetime.now(timezone.utc)
+    data = await request.json()
+    provider: dict[str, str] | None = None
+    payload: dict[str, Any] = {}
+    try:
+        provider = resolve_guest_provider_payload(data)
+        mode = str(data.get("mode") or "basic").strip()
+        if mode not in {"basic", "advanced"}:
+            mode = "basic"
+        try:
+            report = build_name_rule_report(
+                name=str(data.get("name") or ""),
+                gender=str(data.get("gender") or "unknown"),
+                mode=mode,
+                birth_datetime=str(data.get("birth_datetime") or "").strip() or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        preference = str(data.get("preference") or "").strip()[:500]
+        prompt = build_name_score_prompt(report)
+        if preference:
+            prompt += f"\n用户补充偏好：{preference}\n"
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": "你是谨慎、克制的中文姓名赏析助手。必须返回 JSON。"},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": clamp_number(data.get("temperature"), 0, 1.2, 0.45),
+            "max_tokens": clamp_int_value(data.get("max_tokens"), 512, 4096, 1800),
+        }
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                join_api_url(provider["base_url"], "/v1/chat/completions"),
+                headers={"Authorization": f"Bearer {provider['api_key']}", "Content-Type": "application/json"},
+                json=payload,
+            )
+        raise_for_status_with_body(response)
+        result = response.json()
+        reply = extract_chat_content_text(result).strip()
+        ai_json = parse_json_object(reply) or build_fallback_ai_result(report)
+        api_response = {
+            "provider": provider["provider_key"],
+            "model": provider["model"],
+            "result": merge_ai_name_result(report, ai_json),
+            "usage": result.get("usage") or {},
+        }
+        await record_entertainment_log(
+            request,
+            tool_key="name_score",
+            request_payload=data,
+            provider=provider,
+            upstream_payload=payload,
+            response_payload={"api_response": api_response, "model_response": result},
+            usage=result.get("usage") or {},
+            status_code=getattr(response, "status_code", 200),
+            success=True,
+            started_at=started_at,
+        )
+        return api_response
+    except Exception as exc:
+        await record_entertainment_log(
+            request,
+            tool_key="name_score",
+            request_payload=data,
+            provider=provider,
+            upstream_payload=payload,
+            status_code=exc.status_code if isinstance(exc, HTTPException) else None,
+            success=False,
+            error_message=str(exc.detail if isinstance(exc, HTTPException) else exc),
+            started_at=started_at,
+        )
+        raise
+
+
+@app.post("/api/entertainment/baby-names")
+async def api_entertainment_baby_names(request: Request):
+    started_at = datetime.now(timezone.utc)
+    data = await request.json()
+    provider: dict[str, str] | None = None
+    payload: dict[str, Any] = {}
+    try:
+        provider = resolve_guest_provider_payload(data)
+        mode = str(data.get("mode") or "basic").strip()
+        if mode not in {"basic", "advanced"}:
+            mode = "basic"
+        gender = str(data.get("gender") or "unknown").strip()
+        if gender not in {"male", "female", "unknown"}:
+            gender = "unknown"
+        birth_datetime = str(data.get("birth_datetime") or "").strip() or None
+        try:
+            prompt = build_baby_name_prompt(
+                surname=str(data.get("surname") or ""),
+                gender=gender,
+                mode=mode,
+                name_length=clamp_int_value(data.get("name_length"), 2, 3, 3),
+                birth_datetime=birth_datetime,
+                source_preference=str(data.get("source_preference") or ""),
+                style_preference=str(data.get("style_preference") or ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": "你是专业、克制的中文宝宝起名助手。必须只返回合法 JSON。"},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": clamp_number(data.get("temperature"), 0, 1.2, 0.62),
+            "max_tokens": clamp_int_value(data.get("max_tokens"), 2048, 8192, 4200),
+        }
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(
+                join_api_url(provider["base_url"], "/v1/chat/completions"),
+                headers={"Authorization": f"Bearer {provider['api_key']}", "Content-Type": "application/json"},
+                json=payload,
+            )
+        raise_for_status_with_body(response)
+        result = response.json()
+        reply = extract_chat_content_text(result).strip()
+        ai_json = parse_json_object(reply)
+        api_response = {
+            "provider": provider["provider_key"],
+            "model": provider["model"],
+            "result": normalize_baby_name_result(
+                surname=str(data.get("surname") or ""),
+                gender=gender,
+                mode=mode,
+                name_length=clamp_int_value(data.get("name_length"), 2, 3, 3),
+                birth_datetime=birth_datetime,
+                source_preference=str(data.get("source_preference") or ""),
+                value=ai_json,
+            ),
+            "usage": result.get("usage") or {},
+        }
+        await record_entertainment_log(
+            request,
+            tool_key="baby_names",
+            request_payload=data,
+            provider=provider,
+            upstream_payload=payload,
+            response_payload={"api_response": api_response, "model_response": result},
+            usage=result.get("usage") or {},
+            status_code=getattr(response, "status_code", 200),
+            success=True,
+            started_at=started_at,
+        )
+        return api_response
+    except Exception as exc:
+        await record_entertainment_log(
+            request,
+            tool_key="baby_names",
+            request_payload=data,
+            provider=provider,
+            upstream_payload=payload,
+            status_code=exc.status_code if isinstance(exc, HTTPException) else None,
+            success=False,
+            error_message=str(exc.detail if isinstance(exc, HTTPException) else exc),
+            started_at=started_at,
+        )
+        raise
 
 
 @app.get("/templates", response_class=HTMLResponse)
@@ -3646,6 +3905,64 @@ def is_probable_base64(value: str) -> bool:
     return True
 
 
+def entertainment_tool_name(tool_key: str) -> str:
+    return {
+        "provider_heartbeat": "游客模型连通性测试",
+        "name_score": "名字打分",
+        "baby_names": "宝宝起名",
+    }.get(tool_key, tool_key)
+
+
+def json_preview(value: Any) -> str:
+    return json.dumps(sanitize_request_value(value), ensure_ascii=False, indent=2)
+
+
+def request_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()[:80]
+    return (request.client.host if request.client else "")[:80]
+
+
+async def record_entertainment_log(
+    request: Request,
+    *,
+    tool_key: str,
+    request_payload: dict[str, Any] | None = None,
+    provider: dict[str, str] | None = None,
+    upstream_payload: dict[str, Any] | None = None,
+    response_payload: Any = None,
+    usage: dict[str, Any] | None = None,
+    status_code: int | None = None,
+    success: bool = False,
+    error_message: str = "",
+    started_at: datetime | None = None,
+) -> None:
+    try:
+        started = started_at or datetime.now(timezone.utc)
+        duration_ms = max(0, int((datetime.now(timezone.utc) - started).total_seconds() * 1000))
+        await EntertainmentLog.create(
+            tool_key=tool_key,
+            tool_name=entertainment_tool_name(tool_key),
+            endpoint=str(request.url.path)[:160],
+            provider_key=str((provider or {}).get("provider_key") or (request_payload or {}).get("provider") or "")[:64],
+            model=str((provider or {}).get("model") or (request_payload or {}).get("model") or "")[:160],
+            base_url=str((provider or {}).get("base_url") or (request_payload or {}).get("base_url") or "")[:500],
+            request_payload=sanitize_request_value(request_payload or {}),
+            upstream_payload=sanitize_request_value(upstream_payload or {}),
+            response_payload=sanitize_request_value(response_payload or {}),
+            usage=sanitize_request_value(usage or {}),
+            status_code=status_code,
+            success=success,
+            error_message=str(error_message or "")[:4000],
+            duration_ms=duration_ms,
+            ip_address=request_client_ip(request),
+            user_agent=str(request.headers.get("user-agent") or "")[:500],
+        )
+    except Exception:
+        pass
+
+
 @app.get("/task/{tid}", response_class=HTMLResponse)
 async def task_detail(request: Request, tid: int):
     user = await require_user(request)
@@ -3990,6 +4307,55 @@ async def admin_home(request: Request):
     await require_admin(request)
     template_list = await Template.all()
     return render(request, "admin.html", **await view_context(request, templates=template_list))
+
+
+@app.get("/admin/entertainment-logs", response_class=HTMLResponse)
+async def admin_entertainment_logs(request: Request, tool: str = "", status: str = "", page: int = 1):
+    await require_admin(request)
+    tool = tool.strip()
+    status = status.strip()
+    query = EntertainmentLog.all()
+    if tool:
+        query = query.filter(tool_key=tool)
+    if status == "success":
+        query = query.filter(success=True)
+    elif status == "failed":
+        query = query.filter(success=False)
+    page = max(1, page)
+    page_size = 50
+    total = await query.count()
+    logs = await query.order_by("-created_at").offset((page - 1) * page_size).limit(page_size)
+    rows = [
+        {
+            "log": log,
+            "request_json": json_preview(log.request_payload),
+            "upstream_json": json_preview(log.upstream_payload),
+            "response_json": json_preview(log.response_payload),
+            "usage_json": json_preview(log.usage),
+        }
+        for log in logs
+    ]
+    return render(
+        request,
+        "admin_entertainment_logs.html",
+        **await view_context(
+            request,
+            rows=rows,
+            total=total,
+            page=page,
+            page_size=page_size,
+            tool=tool,
+            status=status,
+            tool_options=[
+                ("", "全部工具"),
+                ("provider_heartbeat", "游客模型连通性测试"),
+                ("name_score", "名字打分"),
+                ("baby_names", "宝宝起名"),
+            ],
+            status_options=[("", "全部状态"), ("success", "成功"), ("failed", "失败")],
+            title=f"{settings.app_name} · 娱乐广场日志",
+        ),
+    )
 
 
 @app.get("/admin/template/new", response_class=HTMLResponse)

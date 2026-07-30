@@ -6,6 +6,7 @@
 
 - [部署指南](DEPLOY.md)
 - [系统架构](docs/ARCHITECTURE.md)
+- [开发规范](docs/DEVELOPMENT_GUIDELINES.md)
 - [权限与账号体系](docs/AUTHORIZATION.md)
 - [项目结构](docs/PROJECT_STRUCTURE.md)
 - [贡献指南](CONTRIBUTING.md)
@@ -25,6 +26,7 @@ AutoCut Engine 是一个企业级智能视频剪辑平台，采用前后端不�
 | 🎨 创意坊 | 专家经验采集平台——描述剪辑方法+上传视频，AI 自动分析结构化存储 |
 | 🧩 Remotion 模板工厂 | 上传参考图 / 口头描述 → 生成代码化视频模板草稿、转场和特效资产 |
 | 🧠 AI 工具包 | 多厂商模型统一接入，支持 AI 对话、视频转字幕、文生图、文生视频、参考生视频 |
+| 🎡 娱乐广场 | 游客可用的小工具广场，首期支持自带 API Key 的名字打分 |
 | 📋 剪辑详情 | 渲染完成后自动生成可解释的剪辑操作表格（时间点/类型/原因/来源） |
 | ⚙️ 维度注册表 | DB 持久化的维度定义系统，管理后台可编辑参数 schema |
 | 🔐 角色权限 | 普通用户 / 管理员隔离，管理后台全局管控 |
@@ -200,7 +202,19 @@ celery -A tasks worker -Q celery,render --loglevel=info
 - **工具包入口**：剪辑工具包和 AI 工具包使用横向滑动图标 Dock 展示小工具；工具包首页只做入口，具体操作进入各自子页面，剪辑工具包不混放 AI 工具。
 - **本地 ASR**：优先使用 `faster-whisper`，其次 `whisper` CLI，最后回退占位字幕。
 
-### 8. Remotion 模板工厂
+### 8. 娱乐广场
+
+- **游客模式**：`/entertainment` 和 `/entertainment/name-score` 不要求登录；用户必须在页面填写自己的 API Key，后端不会使用平台环境变量或用户中心 Key，避免消耗平台额度。
+- **游客模型配置**：首期支持阿里云百炼 / Qwen、ChatGPT / OpenAI 和自定义 OpenAI 兼容接口。配置区支持 Base URL、模型下拉、自定义模型名、连通性测试和折叠/展开；非敏感配置保存在浏览器，API Key 仅保存在当前浏览器会话。
+- **名字打分**：基础版只输入姓名和性别，硬代码按音韵、字形、字义/寓意、辨识度、正式可用性、性别适配、文化联想七个维度做稳定评分；进阶版增加出生年月日时，按公历年份天干地支、月份季节和时辰地支做近似五行娱乐分析。每个维度先按 `原始分/100 * 权重满分` 折算为贡献分，再汇总为综合分；语气词、无意义重复、谐音雷区、梗化、证件不适用和明显性别气质不匹配会触发质量门槛扣分与封顶；大模型按结构化 JSON 提示词输出解释、出处意象和优化建议，可给出 -5 到 +5 的整数微调，后端会重新校验并计算最终分。
+- **宝宝起名**：`/entertainment/baby-names` 支持基础版和进阶版。用户输入姓氏、姓名字数（2 个字/3 个字）、性别、可选名字来源和偏好，系统生成 10 个候选姓名；若用户指定来源（如《滕王阁序》），提示词会要求严格结合该来源，否则默认参考《渊海子平》《三命通会》《周易》《说文解字》《康熙字典》《诗经》《楚辞》《论语》《孟子》《唐诗三百首》《宋词》等正统起名体系。每个候选名折叠展示出处、推荐理由、音韵、字形、寓意、辨识度、正式可用性、文化联想和风险点；进阶版额外结合出生年月日时输出五行/喜用神参考。
+- **游客调用日志**：游客模型连通性测试、名字打分和宝宝起名都会写入 `EntertainmentLog`。管理员可在 `/admin/entertainment-logs` 查看工具、Provider、模型、耗时、状态、脱敏后的页面参数、上游模型请求和响应；API Key、Token、Base64 与超长文本会隐藏或截断。
+- **寓意来源**：字义/寓意维度来自后端内置的正向字义、风险字、语气词和文化雷区词表；例如“芊”解释为草木繁盛、生机柔韧，“墨”解释为审美与学养。后续可继续把常用起名字、行业偏好和专家经验补进词表。
+- **出处意象**：模型输出的 `possible_imagery` 必须包含“来源/依据 + 意象”说明；后端会用内置字源词表兜底，例如“芊”关联《说文解字》新附的草盛释义，“墨”关联《说文解字》和“翰墨/笔墨”的书写文化语义。
+- **进阶命理分析**：进阶版会在“出处意象”后展示“命理分析”，包含八字概览、五行分析、喜用神/偏弱五行参考、姓名用字补益、平衡提醒、适配等级和典籍参考；所有内容仅按硬代码报告做传统文化解释，不作命运预测。
+- **娱乐边界**：姓名和五行分析只用于娱乐与起名沟通参考，不代表真实命运判断。
+
+### 9. Remotion 模板工厂
 
 - **入口位置**：登录后在顶部“创作工作台”下进入 `/remotion-templates`。
 - **模板生成**：用户可上传草图、参考图、别人模板截图，或直接输入口头描述；系统生成结构化蓝图、参数 Schema、Remotion 源码草稿、HTML 预览草图和浏览器动态预览。
@@ -222,6 +236,7 @@ celery -A tasks worker -Q celery,render --loglevel=info
 | 路由 | 功能 |
 |---|---|
 | `/admin` | 首页：模板列表（缩略图/分类/维度数/编辑/停用）+ 维度概览 |
+| `/admin/entertainment-logs` | 娱乐广场游客调用日志（仅管理员） |
 | `/admin/template/new` | 新建模板（元数据表单 + 维度配置面板） |
 | `/admin/template/{tid}/edit` | 编辑模板（同上） |
 | `/admin/dimensions` | 维度定义管理（JSON schema 编辑器 / 停用启用 / 从种子重置） |
@@ -256,6 +271,12 @@ celery -A tasks worker -Q celery,render --loglevel=info
 | GET | `/ai-match` | AI 智能匹配页 |
 | POST | `/api/ai-match` | AI 分析接口 |
 | POST | `/template/{tid}/render-ai` | 提交渲染（AI 模式，携带 ai_context） |
+| GET | `/entertainment` | 娱乐广场（游客可访问） |
+| GET | `/entertainment/name-score` | 名字打分工具页 |
+| GET | `/entertainment/baby-names` | 宝宝起名工具页 |
+| POST | `/api/entertainment/provider/heartbeat` | 游客自带 Key 的模型连通性测试 |
+| POST | `/api/entertainment/name-score` | 调用游客自带 Key 进行名字打分 |
+| POST | `/api/entertainment/baby-names` | 调用游客自带 Key 生成宝宝名字 |
 | GET | `/ai-tools` | AI 工具包 |
 | GET | `/ai-tools/chat` | AI 对话助手 |
 | POST | `/api/ai-tools/chat` | 调用大模型对话 |
@@ -278,6 +299,7 @@ celery -A tasks worker -Q celery,render --loglevel=info
 | POST | `/creative/create` | 创建创意作品（触发异步 AI 分析） |
 | GET | `/creative/{cid}` | 创意坊详情页 |
 | GET | `/admin` | 管理后台首页 |
+| GET | `/admin/entertainment-logs` | 娱乐广场游客调用日志 |
 | GET | `/admin/template/new` | 新建模板 |
 | GET | `/admin/template/{tid}/edit` | 编辑模板 |
 | POST | `/admin/template/save` | 保存模板 |
@@ -295,7 +317,7 @@ auto_cut_engine/
 ├── config.py                        # 配置（DB/Redis/Celery/Tortoise）
 ├── models.py                        # Tortoise ORM 模型（User/Template/Asset/
 │                                    #   RenderTask/EditDetail/CreativeWork/
-│                                    #   DimensionGroup/DimensionDef）
+│                                    #   DimensionGroup/DimensionDef/EntertainmentLog）
 ├── database.py                      # Tortoise 初始化（幂等）
 ├── auth.py                          # 认证（bcrypt + cookie session）
 ├── tasks.py                         # Celery 任务（render_video / analyze_creative）
@@ -325,6 +347,7 @@ auto_cut_engine/
 │   ├── creative_detail.html         # 创意坊详情（视频+AI分析+结构化参数）
 │   ├── admin.html                   # 管理后台首页（模板列表+维度概览）
 │   ├── admin_template_edit.html     # 模板编辑器
+│   ├── admin_entertainment_logs.html # 娱乐广场游客调用日志
 │   └── admin_dimensions.html        # 维度定义管理
 ├── migrations/                      # Aerich 迁移文件
 ├── tests/

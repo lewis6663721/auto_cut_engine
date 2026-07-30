@@ -6,11 +6,12 @@ auto_cut_engine/
 ├── auth.py                  # 登录、Session、权限校验
 ├── config.py                # 环境变量和路径配置
 ├── database.py              # Tortoise ORM 初始化
-├── models.py                # ORM 模型
+├── models.py                # ORM 模型，含娱乐广场游客调用日志 EntertainmentLog
 ├── tasks.py                 # Celery 任务入口
 ├── seed_data.py             # 种子用户、模板、音效、维度
 ├── render_engine/           # FFmpeg 渲染、AI 分析、Provider 管理、媒体预览
 │   ├── ai_providers.py      # 多厂商 key 配置、心跳检测、Qwen3-ASR / 本地 ASR 兜底
+│   ├── entertainment.py     # 娱乐广场规则引擎：名字打分、游客 Provider 预设、提示词
 │   ├── remotion_factory.py  # Remotion 模板蓝图、源码草稿、转场/特效库生成
 │   ├── remotion_timeline_renderer.py # 剪辑台 Remotion 真渲染桥接器
 │   └── toolkit.py           # 剪辑工具包 / AI 工具包任务实现
@@ -18,13 +19,19 @@ auto_cut_engine/
 ├── templates/               # Jinja2 页面模板
 │   ├── account.html         # 用户中心：AI Provider 管理
 │   ├── ai_tools.html        # AI 工具包入口：转字幕、文生图/视频、参考生视频、声音复刻口播
+│   ├── entertainment.html   # 娱乐广场入口，游客模型配置
+│   ├── entertainment_name_score.html # 名字打分工具
+│   ├── entertainment_baby_names.html # 宝宝起名工具，生成 10 个候选名
+│   ├── admin_entertainment_logs.html # 管理员查看娱乐广场游客调用日志
 │   └── remotion_template_preview.html # Remotion 模板浏览器动态预览
-├── static/                  # CSS 和示例资源
+├── static/                  # CSS、娱乐广场 JS 和示例资源
 ├── media/effects/           # 用户上传的特效包、透明动效、Lottie、LUT、Remotion zip
 ├── tests/                   # pytest 自动化测试
 ├── docs/                    # 项目文档
+│   ├── DEVELOPMENT_GUIDELINES.md # 开发规范：文档同步、提示词契约、输入控件等
 ├── deploy/                  # 部署相关配置示例
 ├── scripts/                 # 部署脚本和维护脚本
+├── AGENTS.md                # 开发 Agent 入口规范，要求先读开发规范
 ├── Dockerfile
 ├── docker-compose.yml
 ├── DEPLOY.md
@@ -41,3 +48,5 @@ auto_cut_engine/
 - 涉及工程、任务、素材的接口必须校验资源归属。
 - 新增重要功能需要补充 `tests/` 下的行为测试。
 - 后续项目更新必须同步更新项目文档；涉及页面、路由、模型、配置、依赖、部署或任务流程时，至少更新 README 或对应 `docs/` 文档。
+- 每次开发前先阅读根目录 `AGENTS.md` 和 `docs/DEVELOPMENT_GUIDELINES.md`。
+- 提示词属于生产契约，必须定义角色、输入变量、硬约束、输出 Schema 和解析兜底；后端必须校验模型返回值，不能直接信任大模型 JSON。

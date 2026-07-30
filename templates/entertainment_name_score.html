@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="entertainment-page name-score-page">
+  <div class="mb-7 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/entertainment" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回娱乐广场</a>
+      <h1 class="page-title mt-3 font-black text-white">名字打分</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">总分 100 分。硬代码先做稳定评分，大模型再按固定提示词给解释和建议。</p>
+    </div>
+  </div>
+
+  <section class="guest-provider-panel" data-guest-provider-panel>
+    <div class="guest-provider-head">
+      <div>
+        <strong>游客模型配置</strong>
+        <span>未登录也可用，但必须填写你自己的 API Key。</span>
+      </div>
+      <div class="guest-provider-actions">
+        <button class="muted-button guest-provider-test" type="button" data-guest-provider-test>连通性测试</button>
+        <button class="muted-button guest-provider-toggle" type="button" data-guest-provider-toggle>收起配置</button>
+      </div>
+    </div>
+    <div class="guest-provider-body" data-guest-provider-body>
+      <div class="guest-provider-grid">
+        <label>
+          <span>供应商</span>
+          <select data-guest-provider>
+            {% for provider in providers %}
+              <option value="{{ provider.key }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.default_model }}" data-model-options='{{ provider.model_options | tojson }}'>{{ provider.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>模型</span>
+          <select data-guest-model></select>
+        </label>
+        <label>
+          <span>Base URL</span>
+          <input data-guest-base-url placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
+        </label>
+        <label>
+          <span>API Key</span>
+          <input data-guest-api-key type="password" placeholder="sk-...">
+        </label>
+      </div>
+      <label class="guest-custom-model">
+        <span>其他模型</span>
+        <input data-guest-custom-model placeholder="下拉没有时填写，例如 qwen-max / 你的网关模型名">
+      </label>
+      <p class="guest-provider-status" data-guest-provider-status>连通性测试通过后会显示 ✅。</p>
+    </div>
+  </section>
+
+  <div class="name-score-layout">
+    <form id="nameScoreForm" class="name-score-form">
+      <div class="name-mode-switch" role="tablist" aria-label="打分模式">
+        <button class="is-active" type="button" data-mode-button="basic">基础版</button>
+        <button type="button" data-mode-button="advanced">进阶版</button>
+      </div>
+      <input type="hidden" id="scoreMode" value="basic">
+      <label>
+        <span>姓名</span>
+        <input id="scoreName" maxlength="12" placeholder="例如：李明泽" required>
+      </label>
+      <label>
+        <span>性别</span>
+        <select id="scoreGender">
+          <option value="unknown">不限定</option>
+          <option value="male">男孩</option>
+          <option value="female">女孩</option>
+        </select>
+      </label>
+      <label id="birthField" class="is-hidden">
+        <span>出生年月日时</span>
+        <div class="birth-time-picker" data-birth-picker>
+          <select id="scoreBirthYear" aria-label="出生年份"></select>
+          <select id="scoreBirthMonth" aria-label="出生月份"></select>
+          <select id="scoreBirthDay" aria-label="出生日期"></select>
+          <select id="scoreBirthHour" aria-label="出生小时"></select>
+        </div>
+        <input id="scoreBirth" type="hidden">
+      </label>
+      <label>
+        <span>补充偏好</span>
+        <textarea id="scorePreference" rows="4" placeholder="可选：希望名字更大气、温柔、书卷气、少重名等"></textarea>
+      </label>
+      <button id="nameScoreSubmit" class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">开始打分</button>
+      <p class="name-score-note">结果仅供娱乐和起名沟通参考，不代表真实命运判断。</p>
+    </form>
+
+    <section id="nameScoreResult" class="name-score-result" hidden>
+      <div class="score-orbit">
+        <span id="scoreValue">--</span>
+        <small>综合分</small>
+      </div>
+      <div class="score-result-body">
+        <div class="score-result-head">
+          <div>
+            <strong id="scoreTitle">等待打分</strong>
+            <span id="scoreVerdict">--</span>
+          </div>
+          <span id="scoreModelTag" class="tag-pill">模型</span>
+        </div>
+        <p id="scoreSummary" class="score-summary"></p>
+        <div id="scoreDetail" class="score-detail"></div>
+        <div id="scoreDimensions" class="score-dimensions"></div>
+        <div class="score-columns">
+          <div>
+            <h3>优点</h3>
+            <ul id="scoreHighlights"></ul>
+          </div>
+          <div>
+            <h3>注意点</h3>
+            <ul id="scoreCautions"></ul>
+          </div>
+          <div>
+            <h3>出处意象</h3>
+            <ul id="scoreSources"></ul>
+          </div>
+          <div id="scoreAdvancedBox" hidden>
+            <h3>命理分析</h3>
+            <ul id="scoreAdvanced"></ul>
+          </div>
+          <div>
+            <h3>优化建议</h3>
+            <ul id="scoreSuggestions"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</section>
+<script src="/static/js/entertainment.js?v=20260730-baby-result-fix"></script>
+{% endblock %}
