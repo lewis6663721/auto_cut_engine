@@ -15,6 +15,7 @@ import httpx
 
 from config import settings
 from models import AiProviderCredential, User
+from render_engine.llm_client import call_chat_completion
 
 
 CAPABILITY_LABELS = {
@@ -71,6 +72,23 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         },
         "capabilities": ["chat", "vision", "asr", "image"],
         "env_key": "OPENAI_API_KEY",
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "base_url": settings.deepseek_base_url,
+        "default_chat_model": "deepseek-v4-flash",
+        "default_asr_model": "",
+        "default_image_model": "",
+        "default_video_model": "",
+        "model_options": {
+            "chat": ["deepseek-v4-flash", "deepseek-v4-pro"],
+            "asr": [],
+            "image": [],
+            "video": [],
+            "tts": [],
+        },
+        "capabilities": ["chat"],
+        "env_key": "DEEPSEEK_API_KEY",
     },
     "qwen": {
         "label": "Qwen 3.7 / 阿里云百炼",
@@ -135,6 +153,8 @@ def _env_api_key(provider_key: str) -> str:
         return settings.transfer_api_key or ""
     if provider_key == "openai":
         return settings.openai_api_key or ""
+    if provider_key == "deepseek":
+        return settings.deepseek_api_key or ""
     if provider_key == "qwen":
         return settings.dashscope_api_key or ""
     if provider_key == "sedance":
@@ -410,7 +430,7 @@ async def check_provider_health(
         elif capability == "video":
             result = {"ok": True, "status": "configured", "message": "视频生成模型配置完整，具体生成接口会在工具执行时检测。"}
         else:
-            result = await _check_chat(base_url, api_key, model, timeout)
+            result = await _check_chat(base_url, api_key, model, timeout, provider_key=provider_key)
     except httpx.HTTPStatusError as exc:
         message = _provider_error_message(exc.response)
         return {"ok": False, "status": "failed", "message": message}
@@ -419,15 +439,16 @@ async def check_provider_health(
     return result
 
 
-async def _check_chat(base_url: str, api_key: str, model: str, timeout: float) -> dict[str, Any]:
-    payload = {"model": model, "messages": [{"role": "user", "content": "只回复 OK"}], "max_tokens": 20}
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(
-            join_api_url(base_url, "/v1/chat/completions"),
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
-        )
-    response.raise_for_status()
+async def _check_chat(base_url: str, api_key: str, model: str, timeout: float, *, provider_key: str = "") -> dict[str, Any]:
+    await call_chat_completion(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        messages=[{"role": "user", "content": "只回复 OK"}],
+        max_tokens=20,
+        provider_key=provider_key or ("deepseek" if model.startswith("deepseek-") else ""),
+        timeout=timeout,
+    )
     return {"ok": True, "status": "ok", "message": "聊天/分析接口可用。"}
 
 

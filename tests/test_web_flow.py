@@ -69,6 +69,8 @@ async def test_entertainment_pages_are_guest_accessible(client):
     assert "宝宝起名" in baby_names.text
     assert "qwen3.7-plus" in name_score.text
     assert "gpt-5.6-sol" in name_score.text
+    assert "DeepSeek" in name_score.text
+    assert "deepseek-v4-flash" in name_score.text
     assert "scoreBirthYear" in name_score.text
     assert "scoreBirthMonth" in name_score.text
     assert "scoreBirthDay" in name_score.text
@@ -88,8 +90,14 @@ async def test_entertainment_pages_are_guest_accessible(client):
     assert "data-guest-provider-toggle" in plaza.text
     assert "data-guest-provider-toggle" in name_score.text
     assert "data-guest-provider-toggle" in baby_names.text
+    assert "data-guest-model-select-field" in name_score.text
+    assert "data-guest-custom-model-label" in name_score.text
+    assert "20260730-custom-model" in name_score.text
     assert "guest-provider-body" in plaza.text
     assert "PROVIDER_COLLAPSED_KEY" in script.text
+    assert "provider === 'custom'" in script.text
+    assert "模型名称（必填）" in script.text
+    assert "customModel.required = customProvider" in script.text
     assert "textList(advanced.preferred_elements)" in script.text
     assert "scoreAdvancedBox" in name_score.text
     assert "renderAdvancedAnalysis" in script.text
@@ -159,7 +167,7 @@ async def test_entertainment_guest_calls_are_logged_for_admin_only(client, monke
         async def post(self, url, headers=None, json=None):
             return FakeResponse()
 
-    monkeypatch.setattr("main.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("render_engine.llm_client.httpx.AsyncClient", FakeAsyncClient)
     response = await client.post(
         "/api/entertainment/name-score",
         json={
@@ -371,12 +379,17 @@ async def test_toolkit_pages_render(client):
     assert "管理各大模型厂商的 API Key" in account.text
     assert "视频生成模型" in account.text
     assert "qwen-image-2.0-pro-2026-04-22" in account.text
+    assert "DeepSeek" in account.text
+    assert "deepseek-v4-flash" in account.text
+    assert "data-capabilities" in account.text
+    assert "data-provider-capability" in account.text
 
     chat = await client.get("/ai-tools/chat")
     assert chat.status_code == 200
     assert "AI 对话助手" in chat.text
     assert "qwen3.7-plus" in chat.text
     assert "qwen-vl-plus" in chat.text
+    assert "deepseek-v4-flash" in chat.text
     assert "/api/ai-tools/chat" in chat.text
     assert "chatImageInput" in chat.text
     assert "image_url" in chat.text
@@ -388,6 +401,7 @@ async def test_toolkit_pages_render(client):
     text_image = await client.get("/ai-tools/text-image")
     assert text_image.status_code == 200
     assert "文生图" in text_image.text
+    assert "deepseek-v4-flash" not in text_image.text
     assert "negative_prompt" in text_image.text
     assert "prompt_extend" in text_image.text
     assert 'name="seed"' in text_image.text
@@ -397,6 +411,7 @@ async def test_toolkit_pages_render(client):
     text_video = await client.get("/ai-tools/text-video")
     assert text_video.status_code == 200
     assert "文生视频" in text_video.text
+    assert "deepseek-v4-flash" not in text_video.text
     assert "negative_prompt" in text_video.text
     assert "prompt_extend" in text_video.text
     assert 'name="seed"' in text_video.text
@@ -639,8 +654,8 @@ async def test_ai_chat_api_uses_openai_compatible_payload(client, monkeypatch):
             captured["json"] = json
             return FakeResponse()
 
-    monkeypatch.setattr("main.resolve_provider_config", fake_resolve_provider_config)
-    monkeypatch.setattr("main.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.routes.ai_tools.resolve_provider_config", fake_resolve_provider_config)
+    monkeypatch.setattr("render_engine.llm_client.httpx.AsyncClient", FakeAsyncClient)
 
     response = await client.post(
         "/api/ai-tools/chat",
@@ -732,7 +747,7 @@ async def test_entertainment_name_score_uses_guest_provider_payload(client, monk
             captured["json"] = json
             return FakeResponse()
 
-    monkeypatch.setattr("main.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("render_engine.llm_client.httpx.AsyncClient", FakeAsyncClient)
     response = await client.post(
         "/api/entertainment/name-score",
         json={
@@ -763,6 +778,7 @@ async def test_entertainment_name_score_uses_guest_provider_payload(client, monk
     assert captured["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer sk-user"
     assert captured["json"]["model"] == "qwen3.7-plus"
+    assert captured["json"]["response_format"] == {"type": "json_object"}
     assert "李明泽" in captured["json"]["messages"][-1]["content"]
     assert "Output Schema (Strict JSON)" in captured["json"]["messages"][-1]["content"]
 
@@ -840,7 +856,7 @@ async def test_entertainment_baby_names_uses_guest_provider_payload(client, monk
             captured["json"] = json
             return FakeResponse()
 
-    monkeypatch.setattr("main.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("render_engine.llm_client.httpx.AsyncClient", FakeAsyncClient)
     response = await client.post(
         "/api/entertainment/baby-names",
         json={
@@ -869,6 +885,8 @@ async def test_entertainment_baby_names_uses_guest_provider_payload(client, monk
     assert data["result"]["advanced"]["preferred_elements"] == ["水", "木"]
     assert captured["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer sk-user"
+    assert captured["json"]["model"] == "qwen3.7-plus"
+    assert captured["json"]["response_format"] == {"type": "json_object"}
     assert "滕王阁序" in captured["json"]["messages"][-1]["content"]
     assert "姓名总字数必须严格为 3 个字" in captured["json"]["messages"][-1]["content"]
     assert "必须输出最合适的 10 个姓名" in captured["json"]["messages"][-1]["content"]
@@ -895,6 +913,29 @@ async def test_ai_chat_provider_dropdown_prefers_user_qwen_over_env(client):
     assert len(qwen_rows) == 1
     assert qwen_rows[0]["source"] == "user"
     assert qwen_rows[0]["display_label"] == "Qwen 3.7 / 阿里云百炼 · 用户中心"
+
+
+@pytest.mark.asyncio
+async def test_creative_and_admin_routes_render_after_route_split(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    creative = await client.get("/creative")
+    assert creative.status_code == 200
+    assert "创意坊" in creative.text
+    creative_new = await client.get("/creative/new")
+    assert creative_new.status_code == 200
+    assert "提交" in creative_new.text
+
+    await client.post("/logout")
+    await client.post("/login", data={"username": "admin", "password": "admin123"})
+    admin = await client.get("/admin")
+    assert admin.status_code == 200
+    assert "管理后台" in admin.text
+    template_new = await client.get("/admin/template/new")
+    assert template_new.status_code == 200
+    assert "维度" in template_new.text
+    dimensions = await client.get("/admin/dimensions")
+    assert dimensions.status_code == 200
+    assert "维度定义" in dimensions.text
 
 
 @pytest.mark.asyncio
@@ -941,8 +982,8 @@ async def test_burn_subtitles_uses_reviewed_text_over_uploaded_file(client, tmp_
         captured.update(kwargs)
         return SimpleNamespace(id=777)
 
-    monkeypatch.setattr("main.save_tool_upload", fake_save_tool_upload)
-    monkeypatch.setattr("main.create_tool_task", fake_create_tool_task)
+    monkeypatch.setattr("app.routes.toolkit.save_tool_upload", fake_save_tool_upload)
+    monkeypatch.setattr("app.routes.toolkit.create_tool_task", fake_create_tool_task)
 
     response = await client.post(
         "/toolkit/burn-subtitles",

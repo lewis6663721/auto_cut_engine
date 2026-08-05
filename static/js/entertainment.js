@@ -16,7 +16,9 @@
   };
 
   const selectedModel = (panel) => {
+    const provider = panel.querySelector('[data-guest-provider]')?.value || '';
     const custom = panel.querySelector('[data-guest-custom-model]')?.value.trim();
+    if (provider === 'custom') return custom;
     return custom || panel.querySelector('[data-guest-model]')?.value || '';
   };
 
@@ -41,6 +43,10 @@
     const provider = panel.querySelector('[data-guest-provider]');
     const model = panel.querySelector('[data-guest-model]');
     const baseUrl = panel.querySelector('[data-guest-base-url]');
+    const modelField = panel.querySelector('[data-guest-model-select-field]');
+    const customModel = panel.querySelector('[data-guest-custom-model]');
+    const customModelField = panel.querySelector('[data-guest-custom-model-field]');
+    const customModelLabel = panel.querySelector('[data-guest-custom-model-label]');
     if (!provider || !model) return;
     const option = provider.selectedOptions?.[0];
     const defaultBaseUrl = option?.dataset.baseUrl || '';
@@ -51,6 +57,7 @@
     } catch {
       options = [];
     }
+    const customProvider = provider.value === 'custom';
     const rows = Array.from(new Set([preferredModel, defaultModel, ...options].filter(Boolean)));
     model.textContent = '';
     rows.forEach((item) => {
@@ -60,6 +67,17 @@
       model.appendChild(el);
     });
     if (preferredModel && rows.includes(preferredModel)) model.value = preferredModel;
+    model.disabled = customProvider;
+    modelField?.classList.toggle('is-hidden', customProvider);
+    customModelField?.classList.toggle('is-required', customProvider);
+    if (customModelLabel) customModelLabel.textContent = customProvider ? '模型名称（必填）' : '其他模型';
+    if (customModel) {
+      customModel.placeholder = customProvider
+        ? '填写中转站模型名，例如 gpt-4o-mini / qwen-plus / 你的网关模型名'
+        : '下拉没有时填写，例如 qwen-max / 你的网关模型名';
+      customModel.required = customProvider;
+      if (customProvider && preferredModel && !customModel.value.trim()) customModel.value = preferredModel;
+    }
     if (baseUrl && !baseUrl.value) baseUrl.value = defaultBaseUrl;
   };
 
@@ -92,6 +110,7 @@
     fillModels(panel, stored.model || provider?.selectedOptions?.[0]?.dataset.model || '');
     if (stored.model && model && !Array.from(model.options).some((option) => option.value === stored.model) && customModel) {
       customModel.value = stored.model;
+      fillModels(panel, stored.model);
     }
     if (apiKey) apiKey.value = sessionStorage.getItem(SECRET_KEY) || '';
 
@@ -100,7 +119,11 @@
       if (customModel) customModel.value = '';
       fillModels(panel, provider.selectedOptions?.[0]?.dataset.model || '');
       syncPanelStorage(panel);
-      if (status) status.textContent = '已切换供应商，建议重新测试连通性。';
+      if (status) {
+        status.textContent = provider.value === 'custom'
+          ? '自定义接口需要填写 Base URL、API Key 和模型名称，然后测试连通性。'
+          : '已切换供应商，建议重新测试连通性。';
+      }
     });
     [model, baseUrl, apiKey, customModel].forEach((item) => {
       item?.addEventListener('input', () => syncPanelStorage(panel));

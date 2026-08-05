@@ -5,6 +5,7 @@ import pytest
 from render_engine.ai_analyzer import analyze_video_for_match
 from render_engine.ai_providers import PROVIDER_PRESETS, is_fun_asr_model, is_qwen_asr_model, qwen_asr_payload, resolve_provider_config
 from render_engine.creative_analyzer import analyze_creative_work
+from render_engine.llm_client import build_chat_completion_payload, chat_completion_endpoint
 from render_engine.remotion_factory import generate_remotion_draft, remotion_asset_library, validate_remotion_code
 from render_engine.toolkit import (
     extract_chat_content_text,
@@ -66,6 +67,34 @@ def test_qwen_provider_uses_current_bailian_defaults():
     assert is_qwen_asr_model("qwen", "qwen3-asr-flash")
     assert not is_qwen_asr_model("qwen", "fun-asr-flash-2026-06-15")
     assert is_fun_asr_model("fun-asr-flash-2026-06-15")
+
+
+def test_deepseek_provider_is_chat_only_and_uses_structured_payload_defaults():
+    preset = PROVIDER_PRESETS["deepseek"]
+    assert preset["base_url"] == "https://api.deepseek.com"
+    assert preset["default_chat_model"] == "deepseek-v4-flash"
+    assert preset["default_asr_model"] == ""
+    assert preset["default_image_model"] == ""
+    assert preset["default_video_model"] == ""
+    assert preset["capabilities"] == ["chat"]
+    assert preset["model_options"]["chat"] == ["deepseek-v4-flash", "deepseek-v4-pro"]
+    assert preset["model_options"]["image"] == []
+    assert preset["model_options"]["video"] == []
+
+    payload = build_chat_completion_payload(
+        model="deepseek-v4-flash",
+        messages=[{"role": "user", "content": "只返回 JSON"}],
+        response_json=True,
+        provider_key="deepseek",
+    )
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["thinking"] == {"type": "disabled"}
+    assert chat_completion_endpoint("https://api.deepseek.com", "deepseek", "deepseek-v4-flash") == (
+        "https://api.deepseek.com/chat/completions"
+    )
+    assert chat_completion_endpoint("https://api.deepseek.com/v1", "deepseek", "deepseek-v4-flash") == (
+        "https://api.deepseek.com/v1/chat/completions"
+    )
 
 
 def test_remotion_draft_generates_safe_remotion_scaffold():
@@ -217,6 +246,12 @@ async def test_video_and_image_provider_catalog_filter_by_mode():
     assert image_rows
     assert all("image" in row.get("capabilities", []) for row in image_rows)
     assert any("gpt-image-1" in row["model_options"] for row in image_rows)
+    assert all(row["provider_key"] != "deepseek" for row in image_rows)
+
+    from render_engine.toolkit import chat_provider_catalog
+
+    chat_rows = await chat_provider_catalog(None)
+    assert any(row["provider_key"] == "deepseek" and row["model"] == "deepseek-v4-flash" for row in chat_rows)
 
     tts_rows = await tts_provider_catalog(None)
     assert tts_rows

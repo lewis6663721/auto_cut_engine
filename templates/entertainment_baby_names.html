@@ -30,7 +30,7 @@
             {% endfor %}
           </select>
         </label>
-        <label>
+        <label data-guest-model-select-field>
           <span>模型</span>
           <select data-guest-model></select>
         </label>
@@ -43,8 +43,8 @@
           <input data-guest-api-key type="password" placeholder="sk-...">
         </label>
       </div>
-      <label class="guest-custom-model">
-        <span>其他模型</span>
+      <label class="guest-custom-model" data-guest-custom-model-field>
+        <span data-guest-custom-model-label>其他模型</span>
         <input data-guest-custom-model placeholder="下拉没有时填写，例如 qwen-max / 你的网关模型名">
       </label>
       <p class="guest-provider-status" data-guest-provider-status>连通性测试通过后会显示 ✅。</p>
@@ -112,5 +112,5 @@
     </section>
   </div>
 </section>
-<script src="/static/js/entertainment.js?v=20260730-baby-result-fix"></script>
+<script src="/static/js/entertainment.js?v=20260730-custom-model"></script>
 {% endblock %}

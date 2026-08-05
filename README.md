@@ -12,6 +12,7 @@
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
 - [变更记录](CHANGELOG.md)
+- [Agent 行为规范](CLAUDE.md)
 
 ## 项目概述
 
@@ -71,6 +72,7 @@ mysql -u root -p -e "CREATE DATABASE auto_cut_engine CHARACTER SET utf8mb4;"
 export MYSQL_URL="mysql://root:YOUR_PASSWORD@localhost:3306/auto_cut_engine"
 export DASHSCOPE_API_KEY="sk-xxx"
 export OPENAI_API_KEY="sk-xxx"
+export DEEPSEEK_API_KEY="sk-xxx"
 export SEDANCE_API_KEY="sk-xxx"
 
 # 4. 数据库迁移
@@ -185,12 +187,14 @@ celery -A tasks worker -Q celery,render --loglevel=info
 
 ### 7. AI 工具包与用户中心
 
-- **用户中心**：集中管理各大模型厂商 API Key、Base URL、默认模型和能力范围。
+- **用户中心**：集中管理各大模型厂商 API Key、Base URL、默认模型和能力范围，当前内置 AIFox / OpenAI 兼容、ChatGPT / OpenAI、Qwen / 阿里云百炼、DeepSeek、Sedance 和自定义兼容接口。
+- **统一 LLM 客户端**：OpenAI 兼容的聊天 / 分析调用统一走 `render_engine/llm_client.py`，负责 Base URL 拼接、请求体构建、JSON 模式、Provider 差异参数和响应文本提取；后续新增聊天类厂商应先扩展 Provider 预设和公共客户端，避免在业务路由里重复写请求代码。
 - **功能页模型优先**：用户中心的默认模型只用于打开工具页时预填；实际调用以具体功能页的模型下拉为准，用户无需为了单次任务反复保存默认配置。
 - **Provider 心跳检测**：支持对聊天 / ASR / 图片能力做可用性检查，结果会写回配置状态。
 - **统一降级策略**：优先调用用户配置的 Provider，失败后自动进入本地兜底，确保业务流程不中断。
 - **Qwen / 百炼默认配置**：默认 Base URL 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`；也支持替换为百炼控制台里的工作空间专属兼容域名。默认模型为 `qwen3.7-plus`、`fun-asr-flash-2026-06-15`、`wan2.7-image`、`happyhorse-1.1-t2v`；聊天候选包含 `qwen-vl-plus`，图片候选包含 `qwen-image-2.0-pro-2026-04-22`。
-- **AI 对话助手**：放在 AI 工具包独立子页面，并为登录用户提供全站右下角悬浮快捷对话窗。对话走 OpenAI 兼容 `chat/completions` 协议；默认可选 Qwen / 百炼 `qwen3.7-plus`，完整页也可选择 `qwen-vl-plus` 并随消息上传图片或填写图片 URL，后端按 `image_url` 内容格式提交。
+- **AI 对话助手**：放在 AI 工具包独立子页面，并为登录用户提供全站右下角悬浮快捷对话窗。对话走 OpenAI 兼容 `chat/completions` 协议；默认可选 Qwen / 百炼 `qwen3.7-plus`、DeepSeek `deepseek-v4-flash`、OpenAI / GPT 等聊天模型，完整页也可选择 `qwen-vl-plus` 并随消息上传图片或填写图片 URL，后端按 `image_url` 内容格式提交。
+- **路由分层**：AI 工具包页面和 API 已迁入 `app/routes/ai_tools.py`；工具任务创建与上传素材入库统一走 `app/services/tool_tasks.py`，后续新增 AI 小工具应复用该入口，避免在 `main.py` 继续堆路由。
 - **Fun-ASR 视频转字幕**：视频转字幕优先使用百炼 `fun-asr-flash-2026-06-15` 原生多模态接口，读取模型返回的句级 / 词级时间戳生成 SRT；页面支持填写上下文和热词来提升行业词、人名、游戏词识别。`qwen3-asr-flash` 仍可作为备选，走 OpenAI 兼容 `chat/completions` + `input_audio`；长音频超出内联音频建议大小或远程失败时自动切换本地 ASR。任务详情和任务中心会显示 `Fun-ASR 大模型`、`Qwen3-ASR 大模型` 或 `本地兜底字幕` 标签，方便确认实际执行路径。
 - **字幕语义拆分**：ASR SRT 生成采用纯硬代码规则引擎，不依赖 LLM。优先使用词级时间戳，按标点天然边界、`sentence_id`、`punct_id` 保护语义段，再用 `jieba` 词性和规则修复否定词、介宾、动宾、数量词、动补、“的”字结构、复合词等边界；每条严格单行，字数会根据视频宽度、字号和安全区动态估算，极端长句会递归硬拆保证不溢屏。只有句级时间戳时会按文本比例生成词级时间，作为降级路径。
 - **模型下拉**：用户中心已为聊天 / ASR / 图片 / 视频生成提供候选模型下拉，支持常用模型直选和自定义手填。视频候选包含 HappyHorse 文生视频 `happyhorse-1.1-t2v`、参考生视频 `happyhorse-1.1-r2v`、视频编辑 `happyhorse-1.0-video-edit`，以及 Wan `wan2.7-t2v` 等模型。
@@ -200,12 +204,13 @@ celery -A tasks worker -Q celery,render --loglevel=info
 - **参考生视频工具**：按 HappyHorse R2V 文档实现，Provider 只显示 DashScope / 百炼 maas 原生域名，并仅展示 `happyhorse-1.1-r2v` / `happyhorse-1.0-r2v`。支持用 `+ / -` 逐张添加或删除 1-9 张 JPG / PNG / WEBP 参考图，提示词可用 `[Image 1]`、`[Image 2]` 指代当前 `media` 顺序；请求走百炼异步 `/api/v1/services/aigc/video-generation/video-synthesis`，参数仅提交 `resolution`、`ratio`、`duration`、`watermark`、`seed`，并轮询 `/api/v1/tasks/{task_id}` 下载结果。
 - **声音复刻口播工具**：阿里百炼 Qwen-TTS 链路，必须使用 DashScope / 百炼原生 Base URL（如 `https://dashscope.aliyuncs.com/compatible-mode/v1`）和 DashScope API Key，不支持 AIFox / OpenAI 兼容网关。系统会先调用 `/services/audio/tts/customization` 创建复刻音色，再用生成的 `voice/voice_id` 调用语音合成接口输出口播音频；复刻目标模型和合成模型默认保持一致，页面强制确认声音授权。
 - **工具包入口**：剪辑工具包和 AI 工具包使用横向滑动图标 Dock 展示小工具；工具包首页只做入口，具体操作进入各自子页面，剪辑工具包不混放 AI 工具。
+- **剪辑工具包分层**：剪辑工具包页面和提交接口已迁入 `app/routes/toolkit.py`，当前包含字幕烧录、视频拼接和提取音频；提交后统一创建异步工具任务并跳转任务详情查看进度。
 - **本地 ASR**：优先使用 `faster-whisper`，其次 `whisper` CLI，最后回退占位字幕。
 
 ### 8. 娱乐广场
 
 - **游客模式**：`/entertainment` 和 `/entertainment/name-score` 不要求登录；用户必须在页面填写自己的 API Key，后端不会使用平台环境变量或用户中心 Key，避免消耗平台额度。
-- **游客模型配置**：首期支持阿里云百炼 / Qwen、ChatGPT / OpenAI 和自定义 OpenAI 兼容接口。配置区支持 Base URL、模型下拉、自定义模型名、连通性测试和折叠/展开；非敏感配置保存在浏览器，API Key 仅保存在当前浏览器会话。
+- **游客模型配置**：首期支持阿里云百炼 / Qwen、ChatGPT / OpenAI、DeepSeek 和自定义 OpenAI 兼容接口。预设供应商提供模型下拉和“其他模型”覆盖；DeepSeek 默认 `https://api.deepseek.com`，模型候选为 `deepseek-v4-flash` / `deepseek-v4-pro`，公共客户端会自动按官方 OpenAI 格式调用 `/chat/completions`；自定义兼容接口面向中转站场景，会隐藏空下拉并要求用户手填模型名称。配置区支持 Base URL、API Key、连通性测试和折叠/展开；非敏感配置保存在浏览器，API Key 仅保存在当前浏览器会话。
 - **名字打分**：基础版只输入姓名和性别，硬代码按音韵、字形、字义/寓意、辨识度、正式可用性、性别适配、文化联想七个维度做稳定评分；进阶版增加出生年月日时，按公历年份天干地支、月份季节和时辰地支做近似五行娱乐分析。每个维度先按 `原始分/100 * 权重满分` 折算为贡献分，再汇总为综合分；语气词、无意义重复、谐音雷区、梗化、证件不适用和明显性别气质不匹配会触发质量门槛扣分与封顶；大模型按结构化 JSON 提示词输出解释、出处意象和优化建议，可给出 -5 到 +5 的整数微调，后端会重新校验并计算最终分。
 - **宝宝起名**：`/entertainment/baby-names` 支持基础版和进阶版。用户输入姓氏、姓名字数（2 个字/3 个字）、性别、可选名字来源和偏好，系统生成 10 个候选姓名；若用户指定来源（如《滕王阁序》），提示词会要求严格结合该来源，否则默认参考《渊海子平》《三命通会》《周易》《说文解字》《康熙字典》《诗经》《楚辞》《论语》《孟子》《唐诗三百首》《宋词》等正统起名体系。每个候选名折叠展示出处、推荐理由、音韵、字形、寓意、辨识度、正式可用性、文化联想和风险点；进阶版额外结合出生年月日时输出五行/喜用神参考。
 - **游客调用日志**：游客模型连通性测试、名字打分和宝宝起名都会写入 `EntertainmentLog`。管理员可在 `/admin/entertainment-logs` 查看工具、Provider、模型、耗时、状态、脱敏后的页面参数、上游模型请求和响应；API Key、Token、Base64 与超长文本会隐藏或截断。
@@ -220,6 +225,7 @@ celery -A tasks worker -Q celery,render --loglevel=info
 - **模板生成**：用户可上传草图、参考图、别人模板截图，或直接输入口头描述；系统生成结构化蓝图、参数 Schema、Remotion 源码草稿、HTML 预览草图和浏览器动态预览。
 - **效果预览**：模板详情页提供“动态预览”入口，打开 `/remotion-templates/{id}/preview` 可看到转场、震屏、光扫、字幕弹出、粒子等效果的快速模拟；该预览不执行生成代码、不渲染 MP4，只用于低成本判断模板方向。
 - **发布到剪辑台**：模板详情页可将模板中的特效 / 转场发布到剪辑台素材面板。剪辑台会保留 Remotion 模板 ID 和原始资产 key；导出时检测到 Remotion 资产会优先走 Remotion 真渲染，失败时自动回落 FFmpeg 近似映射。
+- **路由分层**：Remotion 模板工厂、动态预览、发布到剪辑台和特效资产上传已迁入 `app/routes/remotion.py`；剪辑台消费的 Remotion / 自定义特效资产结构统一由 `app/services/editor_assets.py` 生成。
 - **素材入轨时长**：视频、音频和音效入轨时优先读取 FFprobe 探测到的真实媒体时长，并写入片段 `source_duration`；只有探测失败时才回退到类型默认值。新建工程一次导入多个视频时按真实时长顺序无缝排列，不受空工程默认 30 秒时间轴影响。
 - **真渲染 runtime**：`remotion_runtime/` 是独立 Node 子工程，使用 Remotion CLI 渲染代码化转场 / 特效；本地首次使用需执行 `cd remotion_runtime && npm install`，Docker 镜像会在构建时自动 `npm ci`。
 - **剪映特效形态参考**：专业剪辑软件的特效通常不是单个 HTML，而是“资源包 + 元数据 + 原生渲染算子 / shader / 预览缩略图”的组合。我们用 Remotion 源码和 JSON 蓝图承担“可编辑逻辑”，用浏览器 HTML 做低成本预览，用 Remotion runtime 做最终视频渲染。
@@ -313,7 +319,7 @@ celery -A tasks worker -Q celery,render --loglevel=info
 
 ```text
 auto_cut_engine/
-├── main.py                          # FastAPI 应用入口 + 全部路由
+├── main.py                          # FastAPI 应用入口、生命周期、静态挂载和主路由注册
 ├── config.py                        # 配置（DB/Redis/Celery/Tortoise）
 ├── models.py                        # Tortoise ORM 模型（User/Template/Asset/
 │                                    #   RenderTask/EditDetail/CreativeWork/
@@ -322,12 +328,38 @@ auto_cut_engine/
 ├── auth.py                          # 认证（bcrypt + cookie session）
 ├── tasks.py                         # Celery 任务（render_video / analyze_creative）
 ├── seed_data.py                     # 种子数据（模板/资产/维度/用户）
+├── app/
+│   ├── core/web.py                  # Jinja2 模板、公共 view_context、render helper
+│   ├── core/jobs.py                 # 渲染 / 工具任务入队封装
+│   ├── routes/account.py            # 用户中心、AI Provider 保存 / 删除 / 心跳检测
+│   ├── routes/admin.py              # 管理后台：模板管理、维度重置
+│   ├── routes/ai_tools.py           # AI 工具包页面 / API
+│   ├── routes/auth.py               # 登录、注册、退出路由
+│   ├── routes/creative.py           # 创意坊页面 / API
+│   ├── routes/editor.py             # 剪辑台路由聚合入口
+│   ├── routes/editor_pages.py       # 剪辑台首页 / 工程页 / 项目设置
+│   ├── routes/editor_assets.py      # 剪辑台素材上传 / 删除
+│   ├── routes/editor_tracks.py      # 轨道创建 / 排序 / 视图 / 清理
+│   ├── routes/editor_clips.py       # 片段创建 / 编辑 / 拆分 / 撤销重做
+│   ├── routes/editor_export.py      # 剪辑台导出
+│   ├── routes/entertainment.py      # 娱乐广场页面 / API / 管理员日志路由
+│   ├── routes/pages.py              # 首页、模板中心、AI 智能匹配
+│   ├── routes/remotion.py           # Remotion 模板工厂、特效资产上传
+│   ├── routes/tasks.py              # 任务中心、任务详情、任务进度 API
+│   ├── routes/toolkit.py            # 剪辑工具包页面 / API
+│   ├── services/editor_assets.py    # 剪辑台素材、Remotion / 自定义特效资产 payload
+│   ├── services/editor_timeline.py  # 剪辑台时间线公共逻辑、校验、序列化
+│   ├── services/render_tasks.py     # 普通模板渲染任务创建
+│   ├── services/templates.py        # 模板维度表单解析
+│   ├── services/tool_tasks.py       # 工具任务创建、工具上传素材入库
+│   └── utils/                       # 公共工具函数（clamp、媒体上传/URL、请求参数脱敏和摘要）
 ├── render_engine/
 │   ├── ffmpeg_builder.py            # FFmpeg 命令构建器（维度→滤镜映射）
 │   ├── pipeline.py                  # 渲染管线（单场景/多场景/音频/拼接）
 │   ├── audio.py                     # 音频处理（noisereduce 降噪）
 │   ├── scene_detector.py            # 场景检测（FFmpeg select=gt(scene,0.3)）
 │   ├── ai_analyzer.py               # AI 智能匹配（Qwen-VL 分析+配置生成）
+│   ├── llm_client.py                # OpenAI 兼容聊天客户端（URL/JSON 模式/Provider 差异）
 │   ├── creative_analyzer.py         # 创意坊 AI 分析（视频风格+描述解析）
 │   ├── edit_reporter.py             # 剪辑详情生成器（渲染后自动记录）
 │   └── dimension_registry.py        # 维度注册表（种子→缓存→代理三层）

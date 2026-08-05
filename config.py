@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     ai_remote_enabled: bool = True
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
+    deepseek_api_key: str | None = os.getenv("DEEPSEEK_API_KEY")
+    deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     sedance_api_key: str | None = os.getenv("SEDANCE_API_KEY")
     sedance_base_url: str = os.getenv("SEDANCE_BASE_URL", "")
     remotion_render_enabled: bool = True

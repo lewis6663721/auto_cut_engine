@@ -71,3 +71,17 @@
 - 优化娱乐广场交互：游客模型配置支持折叠/展开并记住状态；宝宝起名新增姓名字数选择（2 个字/3 个字），提示词、结果归一化和兜底候选都会严格按所选总字数输出。
 - 修复宝宝起名进阶版结果区偶发不显示的问题：前端兼容命理偏好字段返回字符串或数组，并在候选名为空时显示明确空状态。
 - 新增娱乐广场游客调用日志：记录模型连通性测试、名字打分和宝宝起名的脱敏入参、上游模型请求、响应、耗时和状态，并提供仅管理员可访问的 `/admin/entertainment-logs` 页面。
+- 优化娱乐广场游客模型配置：选择“自定义 OpenAI 兼容接口”时隐藏模型下拉，改为要求用户手填中转站模型名称；切回预设供应商时恢复模型下拉。
+- 新增 DeepSeek Provider：用户中心和 AI 对话助手支持 `deepseek-v4-flash` / `deepseek-v4-pro`，娱乐广场游客模型配置同步支持 DeepSeek；DeepSeek 仅声明聊天能力，不会出现在图片、视频、ASR、TTS 工具下拉中。
+- 新增 `render_engine/llm_client.py` 公共 LLM 客户端：统一 OpenAI 兼容聊天接口的 Base URL 拼接、JSON 模式、Provider 差异参数和响应文本提取；名字打分、宝宝起名、AI 对话和 Provider 心跳检测已迁移到该公共层。
+- 更新开发规范：后续新增大模型供应商或聊天类能力必须优先扩展公共 LLM 客户端和 Provider 预设，避免在业务路由里重复散落请求代码。
+- 新增根目录 `CLAUDE.md` Agent 行为规范，并在 `AGENTS.md` / 开发规范中要求后续开发遵守“先澄清、保持简单、手术式改动、目标验证”的协作原则。
+- 启动项目结构渐进式优化：新增 `app/core`、`app/routes`、`app/utils` 分层骨架，将娱乐广场页面 / API / 管理员日志路由迁入 `app/routes/entertainment.py`，并把模板渲染上下文、数值 clamp、请求参数脱敏摘要抽到公共模块。
+- 继续拆分路由层：将登录 / 注册 / 退出迁入 `app/routes/auth.py`，将用户中心与 AI Provider 配置、删除、心跳检测迁入 `app/routes/account.py`，`main.py` 继续收敛为应用入口和主路由注册。
+- 继续拆分任务路由：将任务中心、任务详情、任务重跑和任务进度 API 迁入 `app/routes/tasks.py`，并新增 `app/core/jobs.py` 统一封装 Celery / BackgroundTasks 入队逻辑、`app/utils/media.py` 复用媒体文件 URL 生成。
+- 继续拆分 AI 工具包：将 AI 工具包首页、AI 对话、视频转字幕、文生图、文生视频、参考生视频和声音复刻口播路由迁入 `app/routes/ai_tools.py`，并新增 `app/services/tool_tasks.py` 统一创建工具任务与保存工具上传素材。
+- 继续拆分剪辑工具包：将剪辑工具包首页、字幕烧录、视频拼接和提取音频路由迁入 `app/routes/toolkit.py`，与 AI 工具包共用工具任务 service。
+- 继续拆分 Remotion 模板工厂：将 Remotion 模板页面 / API、特效资产上传和发布到剪辑台路由迁入 `app/routes/remotion.py`，并新增 `app/services/editor_assets.py` 统一生成剪辑台素材、Remotion 特效 / 转场和自定义特效资产 payload。
+- 继续拆分创意坊和后台管理：将创意坊列表 / 提交 / 详情 / 生成模板迁入 `app/routes/creative.py`，将模板管理和维度重置迁入 `app/routes/admin.py`，并新增 `app/services/templates.py` 复用模板维度表单解析。
+- 完成 `main.py` 路由拆分：将首页 / 模板中心 / AI 智能匹配迁入 `app/routes/pages.py`，将普通模板渲染任务创建迁入 `app/services/render_tasks.py`。
+- 完成剪辑台路由拆分：`app/routes/editor.py` 收敛为聚合入口，剪辑台页面、素材、轨道、片段和导出分别拆入 `editor_pages.py`、`editor_assets.py`、`editor_tracks.py`、`editor_clips.py`、`editor_export.py`；时间线公共校验、序列化、撤销栈、冻帧和字幕解析迁入 `app/services/editor_timeline.py`。`main.py` 现在只负责 FastAPI 应用创建、生命周期、静态资源挂载、router 注册、healthz 和 favicon。

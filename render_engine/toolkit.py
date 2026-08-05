@@ -19,6 +19,7 @@ import httpx
 from config import BASE_DIR, settings
 from models import Asset, RenderTask
 from render_engine.ai_providers import audio_path_to_data_uri, is_fun_asr_model, is_qwen_asr_model, join_api_url, qwen_asr_payload, resolve_provider_config
+from render_engine.llm_client import extract_chat_content_text as llm_extract_chat_content_text
 from render_engine.scene_detector import probe_duration
 
 
@@ -1545,22 +1546,7 @@ def image_extension_for_mime(mime_type: str) -> str:
 
 
 def extract_chat_content_text(data: dict[str, Any]) -> str:
-    choices = data.get("choices") if isinstance(data, dict) else None
-    if not isinstance(choices, list) or not choices:
-        return ""
-    message = choices[0].get("message") if isinstance(choices[0], dict) else {}
-    content = message.get("content") if isinstance(message, dict) else ""
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                parts.append(str(item.get("text") or item.get("transcript") or ""))
-            elif item:
-                parts.append(str(item))
-        return "\n".join(part.strip() for part in parts if part.strip()).strip()
-    return str(content or "").strip()
+    return llm_extract_chat_content_text(data)
 
 
 def extract_fun_asr_text(data: dict[str, Any]) -> str:

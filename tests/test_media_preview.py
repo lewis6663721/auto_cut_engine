@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from models import Asset
-from main import asset_payload
+from app.services.editor_assets import asset_payload
 from render_engine.media_preview import preview_path_for_asset, preview_url_for_asset, waveform_path_for_asset, waveform_url_for_asset
 
 
@@ -32,7 +32,7 @@ async def test_asset_payload_contains_media_duration(client, tmp_path, monkeypat
     path = tmp_path / "fifteen_seconds.mp4"
     path.write_bytes(b"fake")
     asset = await Asset.create(name=path.name, file_path=str(path), asset_type="video", tags=["editor"])
-    monkeypatch.setattr("main.probe_duration", lambda incoming: 15.234 if str(incoming).endswith(path.name) else 0)
+    monkeypatch.setattr("app.services.editor_assets.probe_duration", lambda incoming: 15.234 if str(incoming).endswith(path.name) else 0)
 
     payload = asset_payload(asset)
 
@@ -45,7 +45,7 @@ async def test_sfx_asset_payload_contains_media_duration(client, tmp_path, monke
     path = tmp_path / "hit.wav"
     path.write_bytes(b"fake")
     asset = await Asset.create(name=path.name, file_path=str(path), asset_type="sfx", tags=["test"])
-    monkeypatch.setattr("main.probe_duration", lambda incoming: 1.75 if str(incoming).endswith(path.name) else 0)
+    monkeypatch.setattr("app.services.editor_assets.probe_duration", lambda incoming: 1.75 if str(incoming).endswith(path.name) else 0)
 
     payload = asset_payload(asset)
 

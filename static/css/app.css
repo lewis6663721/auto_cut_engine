@@ -4862,6 +4862,10 @@ body.is-track-resizing {
   gap: 8px;
 }
 
+.guest-provider-panel label.is-hidden {
+  display: none;
+}
+
 .guest-provider-panel label > span,
 .name-score-form label > span {
   color: #94a3b8;
@@ -4896,6 +4900,10 @@ body.is-track-resizing {
 
 .guest-custom-model {
   max-width: 520px;
+}
+
+.guest-custom-model.is-required input {
+  border-color: rgba(34, 211, 238, .32);
 }
 
 .guest-provider-status[data-state="ok"] {

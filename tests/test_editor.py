@@ -5,9 +5,13 @@ from io import BytesIO
 
 import pytest
 
-import main as app_main
+import app.routes.editor as editor_routes
+import app.routes.editor_clips as editor_clips_routes
+import app.routes.editor_export as editor_export_routes
+import app.routes.editor_pages as editor_pages_routes
 import render_engine.remotion_timeline_renderer as remotion_timeline_renderer
 import render_engine.timeline_renderer as timeline_renderer
+from app.services.editor_assets import asset_payload
 from models import Asset, RenderTask, TimelineClip, TimelineProject, TimelineTrack
 from render_engine.remotion_timeline_renderer import build_remotion_timeline_job, timeline_has_remotion_assets
 from render_engine.timeline_renderer import _build_timeline_command, _ffmpeg_supports_drawtext, _timeline_result_path
@@ -349,7 +353,7 @@ async def test_editor_project_assets_are_listed_in_creation_order(client, tmp_pa
         path.write_bytes(b"fake")
         await Asset.create(name=name, file_path=str(path), asset_type="video", tags=["editor", f"project:{project.id}"])
 
-    payloads = await app_main.project_editor_asset_payloads(project.id)
+    payloads = await editor_routes.project_editor_asset_payloads(project.id)
     listed_names = [item["name"] for item in payloads if item["name"].startswith("order_")]
 
     assert listed_names == names
@@ -364,9 +368,10 @@ async def test_editor_add_video_uses_media_duration_from_asset_payload(client, t
     path = tmp_path / "real_15s.mp4"
     path.write_bytes(b"fake")
     asset = await Asset.create(name=path.name, file_path=str(path), asset_type="video", tags=["editor", f"project:{project.id}"])
-    monkeypatch.setattr(app_main, "probe_duration", lambda incoming: 15.0 if str(incoming).endswith(path.name) else 0)
+    monkeypatch.setattr("app.services.editor_assets.probe_duration", lambda incoming: 15.0 if str(incoming).endswith(path.name) else 0)
+    monkeypatch.setattr(editor_clips_routes, "probe_duration", lambda incoming: 15.0 if str(incoming).endswith(path.name) else 0)
 
-    payload = app_main.asset_payload(asset)
+    payload = asset_payload(asset)
     response = await client.post(
         f"/api/editor/project/{project.id}/clip",
         data={"track_id": video_track.id, "asset_id": asset.id, "start_time": "0", "duration": str(payload["duration"])},
@@ -387,7 +392,7 @@ async def test_editor_add_video_without_duration_probes_media_duration(client, t
     path = tmp_path / "auto_probe_12s.mp4"
     path.write_bytes(b"fake")
     asset = await Asset.create(name=path.name, file_path=str(path), asset_type="video", tags=["editor", f"project:{project.id}"])
-    monkeypatch.setattr(app_main, "probe_duration", lambda incoming: 12.0 if str(incoming).endswith(path.name) else 0)
+    monkeypatch.setattr(editor_clips_routes, "probe_duration", lambda incoming: 12.0 if str(incoming).endswith(path.name) else 0)
 
     response = await client.post(
         f"/api/editor/project/{project.id}/clip",
@@ -404,7 +409,7 @@ async def test_editor_add_video_without_duration_probes_media_duration(client, t
 async def test_editor_project_create_sequences_uploaded_videos_by_real_duration(client, monkeypatch):
     await client.post("/login", data={"username": "demo", "password": "demo123"})
     durations = iter([15.0, 7.0])
-    monkeypatch.setattr(app_main, "probe_duration", lambda incoming: next(durations))
+    monkeypatch.setattr(editor_pages_routes, "probe_duration", lambda incoming: next(durations))
 
     response = await client.post(
         "/editor/project/create",
@@ -435,7 +440,7 @@ async def test_editor_can_delete_user_assets_but_not_system_sfx(client, tmp_path
     path.write_bytes(b"fake")
     asset = await Asset.create(name="deletable_demo.mp4", file_path=str(path), asset_type="video", tags=["editor"])
 
-    payloads = await app_main.project_editor_asset_payloads(project.id)
+    payloads = await editor_routes.project_editor_asset_payloads(project.id)
     payload = next(item for item in payloads if item["id"] == asset.id)
     assert payload["deletable"] is True
 
@@ -532,7 +537,7 @@ async def test_editor_render_can_return_json_for_in_editor_progress(client, tmp_
     async def noop_render(_project_id: int, task_id: int):
         return await RenderTask.get(id=task_id)
 
-    monkeypatch.setattr(app_main, "render_timeline_project", noop_render)
+    monkeypatch.setattr(editor_export_routes, "render_timeline_project", noop_render)
     await client.post("/login", data={"username": "demo", "password": "demo123"})
     await client.post("/editor/project/create", data={"name": "导出进度测试工程", "canvas": "vertical"})
     project = await TimelineProject.get(name="导出进度测试工程")
@@ -565,7 +570,7 @@ async def test_editor_render_selected_clip_returns_json_and_range(client, tmp_pa
     async def noop_render(_project_id: int, task_id: int):
         return await RenderTask.get(id=task_id)
 
-    monkeypatch.setattr(app_main, "render_timeline_project", noop_render)
+    monkeypatch.setattr(editor_export_routes, "render_timeline_project", noop_render)
     await client.post("/login", data={"username": "demo", "password": "demo123"})
     await client.post("/editor/project/create", data={"name": "导出所选片段测试工程", "canvas": "vertical"})
     project = await TimelineProject.get(name="导出所选片段测试工程")
@@ -603,7 +608,7 @@ async def test_editor_render_keeps_redirect_for_plain_form_submit(client, tmp_pa
     async def noop_render(_project_id: int, task_id: int):
         return await RenderTask.get(id=task_id)
 
-    monkeypatch.setattr(app_main, "render_timeline_project", noop_render)
+    monkeypatch.setattr(editor_export_routes, "render_timeline_project", noop_render)
     await client.post("/login", data={"username": "demo", "password": "demo123"})
     await client.post("/editor/project/create", data={"name": "导出跳转测试工程", "canvas": "vertical"})
     project = await TimelineProject.get(name="导出跳转测试工程")
@@ -3154,7 +3159,7 @@ async def test_editor_freeze_frame_creates_image_clip_and_can_undo(client, tmp_p
         target.write_bytes(b"fakejpg")
         return True
 
-    monkeypatch.setattr(app_main, "extract_freeze_frame", fake_extract)
+    monkeypatch.setattr(editor_clips_routes, "extract_freeze_frame", fake_extract)
 
     response = await client.post(
         f"/api/editor/clip/{clip.id}/freeze-frame",
@@ -3203,7 +3208,7 @@ async def test_editor_freeze_frame_rejects_locked_clip(client, tmp_path, monkeyp
         duration=4,
         params={"locked": True},
     )
-    monkeypatch.setattr(app_main, "extract_freeze_frame", lambda *_args: True)
+    monkeypatch.setattr(editor_clips_routes, "extract_freeze_frame", lambda *_args: True)
 
     response = await client.post(f"/api/editor/clip/{clip.id}/freeze-frame", data={"time": "1"})
 

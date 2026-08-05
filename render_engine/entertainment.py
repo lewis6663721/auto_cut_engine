@@ -23,6 +23,13 @@ GUEST_CHAT_PROVIDERS: list[dict[str, Any]] = [
         "model_options": ["gpt-5.6-sol", "gpt-4o", "gpt-4o-mini"],
     },
     {
+        "key": "deepseek",
+        "label": "DeepSeek",
+        "base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",
+        "model_options": ["deepseek-v4-flash", "deepseek-v4-pro"],
+    },
+    {
         "key": "custom",
         "label": "自定义 OpenAI 兼容接口",
         "base_url": "",

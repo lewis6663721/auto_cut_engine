@@ -15,7 +15,7 @@
         <span class="tool-icon"><i data-lucide="key-round"></i></span>
         <div>
           <h2>新增 Provider</h2>
-          <p>支持 ChatGPT、Qwen 3.7 / 百炼、Sedance 和自定义 OpenAI 兼容接口</p>
+          <p>支持 ChatGPT、Qwen 3.7 / 百炼、DeepSeek、Sedance 和自定义 OpenAI 兼容接口</p>
         </div>
       </div>
       <form class="mt-6 grid gap-4" action="/account/ai-providers" method="post">
@@ -29,7 +29,8 @@
                 data-asr-model="{{ preset.default_asr_model }}"
                 data-image-model="{{ preset.default_image_model }}"
                 data-video-model="{{ preset.default_video_model }}"
-                data-model-options='{{ preset.model_options | tojson }}'>
+                data-model-options='{{ preset.model_options | tojson }}'
+                data-capabilities='{{ preset.capabilities | tojson }}'>
                 {{ preset.label }}
               </option>
             {% endfor %}
@@ -61,7 +62,7 @@
         <div class="tool-hint">模型输入框支持下拉选择，也可以手填控制台里的新模型名。HappyHorse 已包含文生视频 t2v、参考生视频 r2v、视频编辑 video-edit；Qwen 默认使用百炼 OpenAI 兼容模式。</div>
         <div class="capability-grid">
           {% for cap, cap_label in capability_labels.items() %}
-            <label><input type="checkbox" name="capabilities" value="{{ cap }}" checked> {{ cap_label }}</label>
+            <label><input type="checkbox" name="capabilities" value="{{ cap }}" data-provider-capability> {{ cap_label }}</label>
           {% endfor %}
         </div>
         <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">保存配置</button>
@@ -151,6 +152,15 @@ const fillPreset = () => {
   fillModelSelect('asr', options.asr, option.dataset.asrModel || '');
   fillModelSelect('image', options.image, option.dataset.imageModel || '');
   fillModelSelect('video', options.video, option.dataset.videoModel || '');
+  let capabilities = [];
+  try {
+    capabilities = JSON.parse(option.dataset.capabilities || '[]') || [];
+  } catch {
+    capabilities = [];
+  }
+  document.querySelectorAll('[data-provider-capability]').forEach((input) => {
+    input.checked = capabilities.includes(input.value);
+  });
 };
 presetSelect?.addEventListener('change', fillPreset);
 fillPreset();
