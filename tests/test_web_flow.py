@@ -1057,6 +1057,34 @@ async def test_task_filter_requires_login_then_renders(client):
 
 
 @pytest.mark.asyncio
+async def test_tasks_page_paginates_and_preserves_status_filter(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    user = await User.get(username="demo")
+    for index in range(1, 26):
+        await RenderTask.create(
+            user=user,
+            template=None,
+            source_asset=None,
+            status="success",
+            progress=100,
+            ai_context={"tool_name": f"分页任务 {index:02d}"},
+        )
+
+    first_page = await client.get("/tasks?status=success")
+    second_page = await client.get("/tasks?status=success&page=2")
+
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+    assert "第 1 - 20 条，共 25 条" in first_page.text
+    assert "第 21 - 25 条，共 25 条" in second_page.text
+    assert "/tasks?status=success&amp;page=2" in first_page.text
+    assert "/tasks?status=success" in second_page.text
+    assert "分页任务 25" in first_page.text
+    assert "分页任务 01" not in first_page.text
+    assert "分页任务 01" in second_page.text
+
+
+@pytest.mark.asyncio
 async def test_tool_task_detail_hides_edit_details(client):
     await client.post("/login", data={"username": "demo", "password": "demo123"})
     user = await User.get(username="demo")

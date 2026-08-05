@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 @router.get("/tasks", response_class=HTMLResponse)
-async def tasks_page(request: Request, status: str = ""):
+async def tasks_page(request: Request, status: str = "", page: int = 1):
     user = await require_user(request)
     status_filter = status or "all"
     query = RenderTask.all()
@@ -28,8 +28,48 @@ async def tasks_page(request: Request, status: str = ""):
         query = query.filter(user=user)
     if status_filter in {"pending", "processing", "success", "failed"}:
         query = query.filter(status=status_filter)
-    task_rows = await query.order_by("-created_at").limit(50).prefetch_related("template", "user")
-    return render(request, "tasks.html", **await view_context(request, tasks=task_rows, status_filter=status_filter))
+    page_size = 20
+    total_count = await query.count()
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    current_page = max(1, min(page, total_pages))
+    task_rows = (
+        await query.order_by("-created_at", "-id")
+        .offset((current_page - 1) * page_size)
+        .limit(page_size)
+        .prefetch_related("template", "user")
+    )
+
+    def page_url(target_page: int) -> str:
+        params = []
+        if status_filter != "all":
+            params.append(f"status={status_filter}")
+        if target_page > 1:
+            params.append(f"page={target_page}")
+        return "/tasks" + (f"?{'&'.join(params)}" if params else "")
+
+    page_numbers = sorted(
+        {
+            1,
+            total_pages,
+            *range(max(1, current_page - 2), min(total_pages, current_page + 2) + 1),
+        }
+    )
+    pagination = {
+        "page": current_page,
+        "page_size": page_size,
+        "total_count": total_count,
+        "total_pages": total_pages,
+        "start_index": 0 if total_count == 0 else (current_page - 1) * page_size + 1,
+        "end_index": min(total_count, current_page * page_size),
+        "prev_url": page_url(current_page - 1) if current_page > 1 else "",
+        "next_url": page_url(current_page + 1) if current_page < total_pages else "",
+        "pages": [{"number": number, "url": page_url(number), "current": number == current_page} for number in page_numbers],
+    }
+    return render(
+        request,
+        "tasks.html",
+        **await view_context(request, tasks=task_rows, status_filter=status_filter, pagination=pagination),
+    )
 
 
 def task_progress_payload(task: RenderTask) -> dict[str, Any]:
