@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from config import settings
 from models import AiProviderCredential, Asset, EntertainmentLog, RemotionTemplate, RenderTask, Template, TimelineProject, User
 from render_engine.entertainment import build_baby_name_prompt, build_name_rule_report, build_name_score_prompt, merge_ai_name_result
 
@@ -17,6 +18,8 @@ async def test_seeded_homepage_renders(client):
     response = await client.get("/")
     assert response.status_code == 200
     assert "剪·AI" in response.text
+    assert "剪·AI - 将剪辑经验代码化、资产化、自动化" in response.text
+    assert "site-footer" in response.text
     assert "/brand/logo.png" in response.text
     assert "homeFeatureCloud" in response.text
     assert "模板中心" in response.text
@@ -1124,3 +1127,264 @@ async def test_ai_match_page_contains_result_sections(client):
     assert "推荐效果配置" in response.text
     assert "关键时刻建议" in response.text
     assert "场景分割方案" in response.text
+
+
+@pytest.mark.asyncio
+async def test_agents_pages_render(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    home = await client.get("/agents")
+    storyboard = await client.get("/agents/storyboard")
+    drama = await client.get("/agents/drama-storyboard")
+    assert home.status_code == 200
+    assert storyboard.status_code == 200
+    assert drama.status_code == 200
+    assert "智能体" in home.text
+    assert "脚本分镜智能体" in home.text
+    assert "短剧故事版" in home.text
+    assert "/agents/storyboard" in home.text
+    assert "/agents/drama-storyboard" in home.text
+    assert "角色档案" in storyboard.text
+    assert "道具档案" in storyboard.text
+    assert "视觉风格（可选）" in storyboard.text
+    assert "模型配置" in storyboard.text
+    assert "展开" in storyboard.text
+    assert "供应商" in storyboard.text
+    assert "模型" in storyboard.text
+    assert 'id="storyboardBaseUrl"' not in storyboard.text
+    assert 'id="storyboardApiKey"' not in storyboard.text
+    assert "自动判断" in storyboard.text
+    assert "同步生成分镜" in storyboard.text
+    assert "异步生成任务" in storyboard.text
+    assert "上传剧本文件（可选）" in storyboard.text
+    assert "跳转到任务详情" in storyboard.text
+    assert ">镜头数量<" not in storyboard.text
+    assert ">画幅<" not in storyboard.text
+    assert "配置" in drama.text
+    assert "分镜解析" in drama.text
+    assert "资产管理" in drama.text
+    assert "视频生成" in drama.text
+    assert "后处理" in drama.text
+    assert "实时日志" in drama.text
+    assert "图片并发" in drama.text
+    assert "视频并发" in drama.text
+    assert "音频并发" in drama.text
+    assert "开始分镜" in drama.text
+    assert "开始解析" in drama.text
+    assert "一键生成所有资产" in drama.text
+    assert "一键生成所有视频" in drama.text
+    assert "开始后处理" in drama.text
+
+
+@pytest.mark.asyncio
+async def test_script_storyboard_api_plan_only(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    response = await client.post(
+        "/api/agents/storyboard",
+        json={
+            "title": "脚本分镜测试",
+            "script": "女主在公司发现文件被删除，男主误会她泄密。女主调出监控证明真相，男主要求重新调查。",
+            "style": "强一致性短剧分镜",
+            "shot_count": 5,
+            "group_size": 3,
+            "aspect_ratio": "9:16",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["title"] == "脚本分镜测试"
+    assert data["summary"]["shot_count"] == 5
+    assert data["summary"]["group_count"] == 2
+    assert len(data["character_profiles"]) >= 1
+    assert len(data["prop_profiles"]) >= 1
+    assert len(data["shots"]) == 5
+    assert "三重自检" in data["markdown"]
+
+
+@pytest.mark.asyncio
+async def test_script_storyboard_form_supports_auto_sync_and_uploads(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    response = await client.post(
+        "/agents/storyboard/run",
+        data={
+            "mode": "sync",
+            "title": "自动分镜表单",
+            "script": "女主在公司发现文件被删除，男主误会她泄密。女主调出监控证明真相，男主要求重新调查。",
+            "visual_style": "自动判断",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["title"] == "自动分镜表单"
+    assert data["summary"]["style"] == "现代都市影视风格"
+    assert data["summary"]["shot_count"] >= 6
+    assert "强制前置校验表" in data["formatted_text"]
+
+    txt_response = await client.post(
+        "/agents/storyboard/run",
+        data={
+            "mode": "sync",
+            "title": "txt 上传分镜",
+            "script": "",
+            "visual_style": "二次元动漫风格",
+        },
+        files={"script_file": ("story.txt", BytesIO("主角发现魔法地图亮起，伙伴误会他偷走宝石。主角打开地图证明真相，众人一起前往遗迹。".encode("utf-8")), "text/plain")},
+    )
+    assert txt_response.status_code == 200
+    assert txt_response.json()["summary"]["style"] == "二次元动漫风格"
+
+    docx_buffer = BytesIO()
+    with zipfile.ZipFile(docx_buffer, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                "<w:body><w:p><w:r><w:t>女主收到匿名文件，发现办公室监控被删。</w:t></w:r></w:p>"
+                "<w:p><w:r><w:t>她找到备份视频，公开真相并推动重新调查。</w:t></w:r></w:p></w:body></w:document>"
+            ),
+        )
+    docx_buffer.seek(0)
+    docx_response = await client.post(
+        "/agents/storyboard/run",
+        data={
+            "mode": "sync",
+            "title": "docx 上传分镜",
+            "script": "",
+            "visual_style": "自动判断",
+        },
+        files={
+            "script_file": (
+                "story.docx",
+                docx_buffer,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert docx_response.status_code == 200
+    assert docx_response.json()["summary"]["title"] == "docx 上传分镜"
+
+
+@pytest.mark.asyncio
+async def test_script_storyboard_async_returns_task_link(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    response = await client.post(
+        "/agents/storyboard/run",
+        data={
+            "mode": "async",
+            "title": "异步分镜任务",
+            "script": "女主在公司发现项目文件被删，男主误会她泄密。女主调出监控证明真相，男主挡在她身前要求重新调查。",
+            "visual_style": "自动判断",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["task_id"]
+    assert data["task_url"] == f"/task/{data['task_id']}"
+    task = await RenderTask.get(id=data["task_id"])
+    assert task.ai_context["tool_key"] == "script_storyboard"
+    assert task.ai_context["request_payload"]["title"] == "异步分镜任务"
+
+
+@pytest.mark.asyncio
+async def test_task_detail_renders_text_result_for_storyboard(client):
+    user = await User.get(username="demo")
+    result_path = settings.media_path / "results" / "script_storyboard_preview.txt"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text("第一行文本预览\n第二行文本预览", encoding="utf-8")
+    task = await RenderTask.create(
+        user=user,
+        template=None,
+        source_asset=None,
+        status="success",
+        progress=100,
+        result_url=f"/media/results/{result_path.name}",
+        ai_context={
+            "tool_key": "script_storyboard",
+            "tool_name": "脚本分镜智能体",
+            "tool_module": "agent",
+            "tool_result_kind": "text",
+            "tool_result_extra": {"json_result_path": str(result_path)},
+            "progress_stage": "脚本分镜生成完成",
+        },
+    )
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    response = await client.get(f"/task/{task.id}")
+    assert response.status_code == 200
+    assert "第一行文本预览" in response.text
+    assert "<video" not in response.text
+    assert "下载文本结果" in response.text
+
+
+@pytest.mark.asyncio
+async def test_drama_storyboard_api_plan_only(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    response = await client.post(
+        "/api/agents/drama-storyboard",
+        json={
+            "title": "测试故事版",
+            "script": "女主发现文件被删，男主帮她查出真相，最后一起反击。",
+            "style": "竖屏短剧，节奏快，情绪递进",
+            "shot_count": 4,
+            "target_duration": 24,
+            "aspect_ratio": "9:16",
+            "execute_mode": "plan_only",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["title"] == "测试故事版"
+    assert data["summary"]["mode"] == "plan_only"
+    assert data["summary"]["shot_count"] == 4
+    assert len(data["storyboard"]) == 4
+    assert len(data["assets"]) >= 1
+    assert len(data["videos"]) == 4
+    assert "Markdown 摘要" not in data["logs"][0]["message"]
+    assert "测试故事版" in data["markdown"]
+
+
+@pytest.mark.asyncio
+async def test_drama_storyboard_page_renders_with_json_safe_provider_catalogs(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    response = await client.get("/agents/drama-storyboard")
+    assert response.status_code == 200
+    assert "短剧故事版" in response.text
+    assert "配置" in response.text
+
+
+@pytest.mark.asyncio
+async def test_drama_storyboard_project_save_and_load(client):
+    await client.post("/login", data={"username": "demo", "password": "demo123"})
+    save = await client.post(
+        "/api/agents/drama-storyboard/projects",
+        json={
+            "title": "回填测试",
+            "current_step": 4,
+            "status": "draft",
+            "payload": {
+                "title": "回填测试",
+                "script": "女主发现文件被删，男主帮她查出真相。",
+                "style": "竖屏短剧，节奏快",
+                "storyboard": [{"index": 1, "scene": "办公室", "action": "女主发现文件被删"}],
+                "assets": [{"type": "角色", "name": "女主"}],
+                "videos": [{"shot": 1, "prompt": "镜头推进"}],
+                "postprocess": [{"step": "字幕烧录"}],
+                "logs": [{"stage": "配置", "message": "已保存"}],
+                "summary": {"mode_label": "只生成规划，不消耗生成额度"},
+            },
+        },
+    )
+    assert save.status_code == 200
+    data = save.json()
+    assert data["title"] == "回填测试"
+    assert data["current_step"] == 4
+    assert data["shot_count"] == 1
+
+    list_resp = await client.get("/api/agents/drama-storyboard/projects")
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()["projects"]) >= 1
+
+    detail = await client.get(f"/api/agents/drama-storyboard/projects/{data['id']}")
+    assert detail.status_code == 200
+    payload = detail.json()["payload"]
+    assert payload["title"] == "回填测试"
+    assert payload["storyboard"][0]["scene"] == "办公室"

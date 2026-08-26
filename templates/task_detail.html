@@ -78,6 +78,11 @@
       <div class="mt-4 flex gap-4 text-lg font-black">
         <a class="text-cyan-300" href="{{ task.result_url }}" download>⬇ 下载音频</a>
       </div>
+    {% elif task.result_url and (task.ai_context or {}).get("tool_result_kind") == "text" %}
+      <pre data-result-preview="true" class="max-h-[420px] overflow-auto rounded-lg bg-slate-950 p-5 text-sm leading-7 text-slate-300 whitespace-pre-wrap">{{ result_preview or task.result_url }}</pre>
+      <div class="mt-4 flex gap-4 text-lg font-black">
+        <a class="text-cyan-300" href="{{ task.result_url }}" download>⬇ 下载文本结果</a>
+      </div>
     {% elif task.result_url %}
       <video data-result-preview="true" controls src="{{ task.result_url }}" class="aspect-video w-full rounded-lg bg-black"></video>
       <div class="mt-4 flex gap-4 text-lg font-black">

@@ -149,6 +149,22 @@ class RenderTask(Model, TimestampMixin):
         ordering = ["-created_at"]
 
 
+class DramaStoryboardProject(Model, TimestampMixin):
+    id = fields.IntField(primary_key=True)
+    user: fields.ForeignKeyRelation[User] = fields.ForeignKeyField(
+        "models.User", related_name="drama_storyboard_projects", on_delete=fields.CASCADE
+    )
+    title = fields.CharField(max_length=160, default="短剧故事版")
+    current_step = fields.IntField(default=1)
+    status = fields.CharField(max_length=24, default="draft")
+    payload = fields.JSONField(default=dict)
+    updated_at = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "ace_drama_storyboard_projects"
+        ordering = ["-updated_at", "-id"]
+
+
 class TimelineProject(Model, TimestampMixin):
     id = fields.IntField(primary_key=True)
     user: fields.ForeignKeyRelation[User] = fields.ForeignKeyField(

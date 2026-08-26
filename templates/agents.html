@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="agents-page">
+  <div class="agents-hero">
+    <h1 class="page-title font-black text-white">智能体</h1>
+    <p>AI Agent 自动化工作流，一键完成复杂创作。</p>
+  </div>
+
+  <div class="agent-grid">
+    {% for agent in agents %}
+      <a class="agent-card" href="{{ agent.url }}">
+        <span class="agent-card-date">{{ agent.date }} {{ agent.date_kind }}</span>
+        <div class="agent-card-body">
+          <span class="agent-card-icon"><i data-lucide="{{ agent.icon }}"></i></span>
+          <div class="agent-card-copy">
+            <h2>{{ agent.label }}</h2>
+            <p>{{ agent.description }}</p>
+            <small>{{ agent.tags | join(" / ") }}</small>
+          </div>
+        </div>
+      </a>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

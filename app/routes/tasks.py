@@ -127,11 +127,21 @@ async def task_detail(request: Request, tid: int):
     result_preview = ""
     if task.result_url:
         result_path = settings.media_path / "results" / Path(task.result_url).name
-        if result_path.exists() and result_path.suffix.lower() in {".srt", ".txt", ".json"}:
+        if result_path.exists() and result_path.suffix.lower() in {".srt", ".txt", ".json", ".md", ".markdown"}:
             try:
                 result_preview = result_path.read_text(encoding="utf-8")
             except Exception:
                 result_preview = ""
+    if (task.ai_context or {}).get("tool_key") == "script_storyboard" and not result_preview:
+        extra = (task.ai_context or {}).get("tool_result_extra", {})
+        preview_source = extra.get("json_result_path")
+        if preview_source:
+            preview_path = settings.media_path / "results" / Path(preview_source).name
+            if preview_path.exists():
+                try:
+                    result_preview = preview_path.read_text(encoding="utf-8")
+                except Exception:
+                    result_preview = ""
     return render(
         request,
         "task_detail.html",

@@ -1,0 +1,998 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="drama-page">
+  <div class="drama-topbar">
+    <div class="drama-topbar-title">
+      <a href="/agents" class="text-sm font-black text-slate-500 transition hover:text-slate-200">← 返回智能体</a>
+      <h1 class="page-title mt-3 font-black text-white">短剧故事版</h1>
+      <p class="mt-3 max-w-4xl text-sm font-semibold leading-6 text-slate-500">按 5 步手动推进：配置、分镜解析、资产管理、视频生成、后处理。工程会自动保存，历史记录可回填继续编辑。</p>
+    </div>
+  </div>
+
+  <div class="pipeline-stepper" aria-label="故事版流水线">
+    <div class="pipeline-step is-active" data-step-indicator="1"><span>1</span><strong>配置</strong></div>
+    <div class="pipeline-step is-pending" data-step-indicator="2"><span>2</span><strong>分镜解析</strong></div>
+    <div class="pipeline-step is-pending" data-step-indicator="3"><span>3</span><strong>资产管理</strong></div>
+    <div class="pipeline-step is-pending" data-step-indicator="4"><span>4</span><strong>视频生成</strong></div>
+    <div class="pipeline-step is-pending" data-step-indicator="5"><span>5</span><strong>后处理</strong></div>
+  </div>
+
+  <div class="drama-layout">
+    <div class="drama-main">
+      <form id="dramaStoryboardForm" class="tool-config-panel drama-form-panel">
+        <div class="tool-section" data-step-panel="1">
+          <h2>配置</h2>
+          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <label class="tool-field">文本模型
+              <select id="dramaTextProvider"></select>
+            </label>
+            <label class="tool-field">文本模型名称
+              <select id="dramaTextModel"></select>
+            </label>
+            <label class="tool-field">图片模型
+              <select id="dramaImageProvider"></select>
+            </label>
+            <label class="tool-field">图片模型名称
+              <select id="dramaImageModel"></select>
+            </label>
+            <label class="tool-field">视频模型
+              <select id="dramaVideoProvider"></select>
+            </label>
+            <label class="tool-field">视频模型名称
+              <select id="dramaVideoModel"></select>
+            </label>
+            <label class="tool-field">ASR 模型
+              <select id="dramaAsrProvider"></select>
+            </label>
+            <label class="tool-field">ASR 模型名称
+              <select id="dramaAsrModel"></select>
+            </label>
+            <label class="tool-field">TTS 模型
+              <select id="dramaTtsProvider"></select>
+            </label>
+            <label class="tool-field">TTS 模型名称
+              <select id="dramaTtsModel"></select>
+            </label>
+            <label class="tool-field">视觉风格
+              <select id="dramaVisualStyle">
+                {% set style_options = visual_styles or ["自动判断", "现代都市影视风格", "古装仙侠影视风格", "超写实真人电影风格", "暗黑悬疑影视风格", "二次元动漫风格", "复古年代影视风格", "赛博朋克科幻风格"] %}
+                {% for item in style_options %}
+                  <option value="{{ item }}">{{ item }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="tool-field">画幅
+              <select id="dramaAspectRatio">
+                <option value="9:16">9:16 竖屏</option>
+                <option value="16:9">16:9 横屏</option>
+                <option value="1:1">1:1 方屏</option>
+              </select>
+            </label>
+            <label class="tool-field">图片尺寸
+              <select id="dramaImageSize">
+                <option value="1328x1328">1328x1328</option>
+                <option value="1024x1024">1024x1024</option>
+                <option value="1536x1536">1536x1536</option>
+                <option value="1080x1920">1080x1920</option>
+              </select>
+            </label>
+            <label class="tool-field">视频分辨率
+              <select id="dramaVideoResolution">
+                <option value="1080P">1080P</option>
+                <option value="720P">720P</option>
+              </select>
+            </label>
+            <label class="tool-field">图片并发
+              <input id="dramaImageConcurrency" type="number" min="1" max="8" value="2">
+            </label>
+            <label class="tool-field">视频并发
+              <input id="dramaVideoConcurrency" type="number" min="1" max="8" value="2">
+            </label>
+            <label class="tool-field">音频并发
+              <input id="dramaAudioConcurrency" type="number" min="1" max="8" value="2">
+            </label>
+          </div>
+          <div class="tool-hint">分镜组和视频时长默认自由拆分，不在第一步强行限制。图片 / 视频 / 音频的单项生成任务都默认保留 2 次重试，间隔约 3 秒。</div>
+        </div>
+
+        <div class="tool-section" data-step-panel="1">
+          <h2>剧本</h2>
+          <label class="tool-field">标题
+            <input id="dramaTitleInput" value="霸总误会解除短剧">
+          </label>
+          <label class="tool-field">剧本正文
+            <textarea id="dramaScriptInput" rows="10">女主深夜在公司加班，发现项目数据被人恶意篡改。男主误以为她泄密，冷声质问。女主拿出监控证据，证明真正的内鬼是竞争组同事。男主沉默片刻，转身替她挡下所有指责，并当众宣布重新调查。</textarea>
+          </label>
+          <button id="dramaStoryboardStartButton" class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="button">开始分镜</button>
+        </div>
+
+        <div class="tool-section" id="dramaStoryboardSection" data-step-panel="2">
+          <div class="drama-result-head">
+            <div>
+              <strong>分镜解析</strong>
+              <span>原始分镜结果预览，必要时再展开原始结构编辑</span>
+            </div>
+            <div class="agent-action-row">
+              <button id="dramaStoryboardRefreshButton" class="muted-button rounded-xl px-4 py-2 text-sm font-black" type="button">开始解析</button>
+              <button id="dramaStoryboardCopyButton" class="muted-button rounded-xl px-4 py-2 text-sm font-black" type="button">复制 Markdown</button>
+            </div>
+          </div>
+          <div id="dramaStoryboardStats" class="drama-summary-grid"></div>
+          <details class="drama-raw-detail mt-4">
+            <summary>查看完整分镜文本</summary>
+            <pre id="dramaStoryboardRaw" class="drama-markdown-preview mt-4"></pre>
+          </details>
+        </div>
+
+        <div class="tool-section" id="dramaAssetSection" data-step-panel="3">
+          <div class="drama-result-head">
+            <div>
+              <strong>资产管理</strong>
+              <span>角色 / 场景 / 道具提示词可编辑，支持单个和批量生成</span>
+            </div>
+            <div class="agent-action-row">
+              <button id="dramaVideoPlanButton" class="muted-button rounded-xl px-4 py-2 text-sm font-black" type="button">进入视频生成</button>
+              <button id="dramaAssetBatchButton" class="muted-button rounded-xl px-4 py-2 text-sm font-black" type="button">一键生成所有资产</button>
+            </div>
+          </div>
+          <div id="dramaAssetGrid" class="drama-card-grid mt-4"></div>
+        </div>
+
+        <div class="tool-section" id="dramaVideoSection" data-step-panel="4">
+          <div class="drama-result-head">
+            <div>
+              <strong>视频生成</strong>
+              <span>分镜组可二次编辑，可单个重跑，也可批量推进</span>
+            </div>
+            <div class="agent-action-row">
+              <button id="dramaVideoBatchButton" class="muted-button rounded-xl px-4 py-2 text-sm font-black" type="button">一键生成所有视频</button>
+            </div>
+          </div>
+          <div id="dramaVideoGrid" class="drama-card-grid mt-4"></div>
+        </div>
+
+        <div class="tool-section" id="dramaPostprocessSection" data-step-panel="5">
+          <div class="drama-result-head">
+            <div>
+              <strong>后处理</strong>
+              <span>拼接与字幕烧录先出计划，再由人工决定是否执行</span>
+            </div>
+            <div class="agent-action-row">
+              <button id="dramaPostprocessButton" class="gradient-action rounded-xl px-4 py-2 text-sm font-black" type="button">开始后处理</button>
+            </div>
+          </div>
+          <div id="dramaPostprocessList" class="drama-list mt-4"></div>
+        </div>
+
+        <button id="dramaSubmitButton" class="hidden" type="submit">隐藏提交</button>
+      </form>
+    </div>
+
+    <aside class="subtitle-preview-panel drama-log-panel">
+      <details class="drama-project-panel" open>
+        <summary class="agent-result-head">
+          <div>
+            <strong>故事版列表</strong>
+            <span>点击回填之前保存的参数、分镜、资产和后处理结果</span>
+          </div>
+          <button id="dramaNewProjectButton" class="muted-button rounded-xl px-3 py-2 text-xs font-black" type="button">新建</button>
+        </summary>
+        <div id="dramaProjectList" class="drama-project-list"></div>
+      </details>
+      <div class="drama-progress-summary">
+        <span>project <b id="dramaProgressProject">{{ initial_project_id or "new" }}</b></span>
+        <span>storyboard <b id="dramaProgressStep">准备中</b></span>
+        <span>ws <b id="dramaProgressWs">已连接</b></span>
+      </div>
+      <div class="agent-result-head drama-log-head">
+        <div>
+          <strong>实时进度</strong>
+          <span>显示当前执行到哪一步，以及每个任务的返回状态</span>
+        </div>
+      </div>
+      <div id="dramaLogList" class="drama-log-list">
+        <div class="drama-log-empty">提交后会显示配置、分镜、资产、视频和后处理五个阶段。</div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<script>
+const escapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}[char]));
+
+const providerCatalogs = {{ (provider_catalogs or {}) | tojson }};
+const initialProjects = {{ (drama_projects or []) | tojson }};
+const initialProject = {{ (drama_project or {}) | tojson }};
+const state = {
+  projectId: initialProject?.id || null,
+  projectStatus: initialProject?.status || 'draft',
+  step: 1,
+  summary: initialProject?.payload?.summary || initialProject?.summary || {},
+  characters: initialProject?.payload?.character_profiles || [],
+  props: initialProject?.payload?.prop_profiles || [],
+  storyboard: [],
+  storyboardMarkdown: '',
+  assets: [],
+  videos: [],
+  postprocess: [],
+  logs: [],
+  markdown: '',
+  projectList: initialProjects || [],
+  saveTimer: null,
+};
+
+const refs = {
+  form: document.getElementById('dramaStoryboardForm'),
+  title: document.getElementById('dramaTitleInput'),
+  script: document.getElementById('dramaScriptInput'),
+  aspectRatio: document.getElementById('dramaAspectRatio'),
+  imageSize: document.getElementById('dramaImageSize'),
+  videoResolution: document.getElementById('dramaVideoResolution'),
+  imageConcurrency: document.getElementById('dramaImageConcurrency'),
+  videoConcurrency: document.getElementById('dramaVideoConcurrency'),
+  audioConcurrency: document.getElementById('dramaAudioConcurrency'),
+  storyboardStart: document.getElementById('dramaStoryboardStartButton'),
+  storyboardRefresh: document.getElementById('dramaStoryboardRefreshButton'),
+  videoPlan: document.getElementById('dramaVideoPlanButton'),
+  assetBatch: document.getElementById('dramaAssetBatchButton'),
+  videoBatch: document.getElementById('dramaVideoBatchButton'),
+  postprocessButton: document.getElementById('dramaPostprocessButton'),
+  storyboardGrid: document.getElementById('dramaStoryboardGrid'),
+  storyboardRaw: document.getElementById('dramaStoryboardRaw'),
+  storyboardOutput: document.getElementById('dramaStoryboardOutput'),
+  storyboardCopy: document.getElementById('dramaStoryboardCopyButton'),
+  assetGrid: document.getElementById('dramaAssetGrid'),
+  videoGrid: document.getElementById('dramaVideoGrid'),
+  postprocessList: document.getElementById('dramaPostprocessList'),
+  projectList: document.getElementById('dramaProjectList'),
+  newProjectButton: document.getElementById('dramaNewProjectButton'),
+  logList: document.getElementById('dramaLogList'),
+  storyboardStats: document.getElementById('dramaStoryboardStats'),
+  stepIndicators: Array.from(document.querySelectorAll('[data-step-indicator]')),
+  providers: {
+    text: document.getElementById('dramaTextProvider'),
+    textModel: document.getElementById('dramaTextModel'),
+    image: document.getElementById('dramaImageProvider'),
+    imageModel: document.getElementById('dramaImageModel'),
+    video: document.getElementById('dramaVideoProvider'),
+    videoModel: document.getElementById('dramaVideoModel'),
+    asr: document.getElementById('dramaAsrProvider'),
+    asrModel: document.getElementById('dramaAsrModel'),
+    tts: document.getElementById('dramaTtsProvider'),
+    ttsModel: document.getElementById('dramaTtsModel'),
+  },
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const projectApi = {
+  list: '/api/agents/drama-storyboard/projects',
+  save: '/api/agents/drama-storyboard/projects',
+  detail: (id) => `/api/agents/drama-storyboard/projects/${id}`,
+};
+
+const fillSelect = (select, rows, preferredValue) => {
+  if (!select) return;
+  select.innerHTML = '';
+  const options = (rows || []).filter(Boolean);
+  options.forEach((row) => {
+    const option = document.createElement('option');
+    option.value = row.id;
+    option.textContent = row.display_label || row.label || row.id;
+    option.dataset.baseUrl = row.base_url || '';
+    option.dataset.model = row.model || '';
+    option.dataset.modelOptions = JSON.stringify(row.model_options || []);
+    option.dataset.configured = row.configured || 'false';
+    select.appendChild(option);
+  });
+  if (preferredValue && options.some((row) => row.id === preferredValue)) {
+    select.value = preferredValue;
+  } else if (options.length) {
+    select.value = options[0].id;
+  }
+};
+
+const fillModelSelect = (select, providerSelect) => {
+  if (!select || !providerSelect) return;
+  const option = providerSelect.selectedOptions?.[0];
+  const rows = JSON.parse(option?.dataset.modelOptions || '[]');
+  select.innerHTML = '';
+  const values = (rows || []).filter(Boolean);
+  values.forEach((value) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    select.appendChild(opt);
+  });
+  if (values.length) {
+    select.value = option?.dataset.model && values.includes(option.dataset.model) ? option.dataset.model : values[0];
+  }
+};
+
+const syncProviderGroup = (capability) => {
+  const providerSelect = refs.providers[capability];
+  const modelSelect = refs.providers[`${capability}Model`];
+  if (!providerSelect || !modelSelect) return;
+  fillModelSelect(modelSelect, providerSelect);
+};
+
+const syncAllProviders = () => {
+  fillSelect(refs.providers.text, providerCatalogs.text || []);
+  fillSelect(refs.providers.image, providerCatalogs.image || []);
+  fillSelect(refs.providers.video, providerCatalogs.video || []);
+  fillSelect(refs.providers.asr, providerCatalogs.asr || []);
+  fillSelect(refs.providers.tts, providerCatalogs.tts || []);
+  ['text', 'image', 'video', 'asr', 'tts'].forEach((key) => {
+    const providerSelect = refs.providers[key];
+    const modelSelect = refs.providers[`${key}Model`];
+    providerSelect?.addEventListener('change', () => syncProviderGroup(key));
+    syncProviderGroup(key);
+    if (!modelSelect?.options?.length && modelSelect) {
+      const empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '请先去用户中心配置';
+      modelSelect.appendChild(empty);
+    }
+  });
+};
+
+const countUniqueCharacters = (rows) => {
+  const values = new Set();
+  (rows || []).forEach((row) => {
+    (row?.characters || []).forEach((item) => {
+      const value = String(item || '').trim();
+      if (value) values.add(value);
+    });
+  });
+  return values.size;
+};
+
+const countUniqueScenes = (rows) => {
+  const values = new Set();
+  (rows || []).forEach((row) => {
+    const value = String(row?.scene || row?.scene_name || row?.scene_label || '').trim();
+    if (value) values.add(value);
+  });
+  return values.size;
+};
+
+const countUniqueProps = (rows) => {
+  const values = new Set();
+  (rows || []).forEach((row) => {
+    const value = String(row?.name || '').trim();
+    const type = String(row?.type || '').trim();
+    if (type === '道具' && value) values.add(value);
+  });
+  return values.size;
+};
+
+const renderStoryboardStats = () => {
+  if (!refs.storyboardStats) return;
+  const rows = [
+    { value: state.characters?.length || countUniqueCharacters(state.storyboard) || 0, label: '角色' },
+    { value: countUniqueScenes(state.storyboard) || 0, label: '场景' },
+    { value: state.props?.length || countUniqueProps(state.assets) || 0, label: '道具' },
+    { value: state.summary?.group_count || Math.max(1, Math.ceil((state.storyboard?.length || 0) / 3)), label: '镜头组' },
+  ];
+  refs.storyboardStats.innerHTML = rows.map((row) => `
+    <div class="drama-stat-card">
+      <strong>${escapeHtml(row.value)}</strong>
+      <span>${escapeHtml(row.label)}</span>
+    </div>
+  `).join('');
+};
+
+const collectConfig = () => ({
+  title: refs.title?.value || '',
+  script: refs.script?.value || '',
+  visual_style: document.getElementById('dramaVisualStyle')?.value || '自动判断',
+  style: document.getElementById('dramaVisualStyle')?.value || '自动判断',
+  aspect_ratio: refs.aspectRatio?.value || '9:16',
+  image_size: refs.imageSize?.value || '1328x1328',
+  video_resolution: refs.videoResolution?.value || '1080P',
+  image_concurrency: refs.imageConcurrency?.value || 2,
+  video_concurrency: refs.videoConcurrency?.value || 2,
+  audio_concurrency: refs.audioConcurrency?.value || 2,
+  execute_mode: refs.providers.text?.value ? 'llm_storyboard' : 'plan_only',
+  provider: refs.providers.text?.value || '',
+  provider_selection: refs.providers.text?.value || '',
+  model: refs.providers.textModel?.value || '',
+  text_provider: refs.providers.text?.value || '',
+  text_model: refs.providers.textModel?.value || '',
+  image_provider: refs.providers.image?.value || '',
+  image_model: refs.providers.imageModel?.value || '',
+  video_provider: refs.providers.video?.value || '',
+  video_model: refs.providers.videoModel?.value || '',
+  asr_provider: refs.providers.asr?.value || '',
+  asr_model: refs.providers.asrModel?.value || '',
+  tts_provider: refs.providers.tts?.value || '',
+  tts_model: refs.providers.ttsModel?.value || '',
+  default_shot_duration: 5,
+});
+
+const renderLogs = (logs) => {
+  state.logs = logs || [];
+  if (!state.logs.length) {
+    refs.logList.innerHTML = '<div class="drama-log-empty">暂无日志。</div>';
+    return;
+  }
+  refs.logList.innerHTML = state.logs.map((item, index) => `
+    <div class="drama-log-item">
+      <span class="drama-log-time">${escapeHtml(item.time || '')}</span>
+      <span class="drama-log-tag">${escapeHtml(item.stage || `step-${index + 1}`)}</span>
+      <div class="drama-log-message">${escapeHtml(item.message)}</div>
+    </div>
+  `).join('');
+};
+
+const renderProjectList = (rows) => {
+  state.projectList = rows || [];
+  if (!refs.projectList) return;
+  if (!state.projectList.length) {
+    refs.projectList.innerHTML = '<div class="drama-log-empty">暂无已保存故事版，先开始一次分镜即可生成工程记录。</div>';
+    return;
+  }
+  refs.projectList.innerHTML = state.projectList.map((project) => `
+    <div class="drama-project-card-wrap">
+      <button type="button" class="drama-project-card ${Number(project.id) === Number(state.projectId) ? 'is-active' : ''}" data-project-id="${escapeHtml(project.id)}">
+        <strong>${escapeHtml(project.title || '短剧故事版')}</strong>
+        <span>步骤 ${escapeHtml(project.current_step || 1)} · ${escapeHtml(project.status || 'draft')}</span>
+        <small>${escapeHtml(project.updated_at || project.created_at || '')}</small>
+        <small>${escapeHtml((project.summary && project.summary.mode_label) || '')}${project.shot_count ? ` · ${escapeHtml(project.shot_count)} 镜头` : ''}</small>
+      </button>
+      <button type="button" class="drama-project-delete" data-delete-project-id="${escapeHtml(project.id)}" title="删除项目">
+        <i data-lucide="trash-2"></i>
+      </button>
+    </div>
+  `).join('');
+};
+
+const appendLog = (stage, message) => {
+  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  renderLogs([...(state.logs || []), { stage, message, time }]);
+};
+
+const setStep = (step) => {
+  state.step = step;
+  refs.stepIndicators.forEach((node) => {
+    const value = Number(node.dataset.stepIndicator || 0);
+    node.classList.toggle('is-active', value === step);
+    node.classList.toggle('is-complete', value < step);
+    node.classList.toggle('is-pending', value > step);
+  });
+  document.querySelectorAll('[data-step-panel]').forEach((panel) => {
+    const panelStep = Number(panel.dataset.stepPanel || 0);
+    panel.classList.toggle('is-hidden-step', panelStep !== step);
+  });
+};
+
+const stepTargets = {
+  1: 'dramaStoryboardForm',
+  2: 'dramaStoryboardSection',
+  3: 'dramaAssetSection',
+  4: 'dramaVideoSection',
+  5: 'dramaPostprocessSection',
+};
+
+const scrollToStep = (step) => {
+  const id = stepTargets[step];
+  const element = id ? document.getElementById(id) : null;
+  element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+const renderStoryboard = (rows) => {
+  state.storyboard = rows || [];
+  renderStoryboardStats();
+  if (refs.storyboardGrid) {
+    refs.storyboardGrid.innerHTML = state.storyboard.map((shot, index) => `
+    <article class="drama-plan-card" data-storyboard-index="${index}">
+      <div class="drama-plan-head">
+        <strong>镜头 ${escapeHtml(shot.index || index + 1)} · <input class="w-24 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-right text-sm text-slate-200" data-field="duration" value="${escapeHtml(shot.duration || 5)}"> 秒</strong>
+        <span><input class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200" data-field="scene" value="${escapeHtml(shot.scene || '')}" placeholder="场景"></span>
+      </div>
+      <p><textarea class="w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" data-field="action" rows="3">${escapeHtml(shot.action || '')}</textarea></p>
+      <small>角色：<input class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200" data-field="characters" value="${escapeHtml((shot.characters || []).join('、'))}" placeholder="角色1、角色2"></small>
+      <small>镜头：<input class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200" data-field="camera" value="${escapeHtml(shot.camera || '')}" placeholder="镜头"></small>
+      <small>提示词：<textarea class="w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" data-field="video_prompt" rows="3">${escapeHtml(shot.video_prompt || '')}</textarea></small>
+    </article>
+  `).join('') || '<div class="drama-log-empty">点击“开始分镜”后这里会显示可编辑分镜。</div>';
+  }
+};
+
+const renderStoryboardPreview = (data) => {
+  const markdown = String(data?.formatted_text || data?.markdown || data?.storyboard_markdown || '');
+  state.storyboardMarkdown = markdown;
+  state.markdown = markdown || state.markdown || '';
+  state.summary = data?.summary || state.summary || {};
+  state.characters = data?.character_profiles || state.characters || [];
+  state.props = data?.prop_profiles || state.props || [];
+  const progressStep = document.getElementById('dramaProgressStep');
+  if (progressStep) {
+    progressStep.textContent = state.summary?.title ? '分镜解析完成' : '准备中';
+  }
+  renderStoryboardStats();
+  if (refs.storyboardRaw) {
+    refs.storyboardRaw.textContent = markdown || '点击“开始分镜”后这里会显示原始分镜文本。';
+  }
+};
+
+const renderAssets = (rows) => {
+  state.assets = rows || [];
+  refs.assetGrid.innerHTML = state.assets.map((asset, index) => `
+    <article class="drama-plan-card" data-asset-index="${index}">
+      <div class="drama-plan-head">
+        <strong><input class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200" data-field="name" value="${escapeHtml(asset.name || '')}" placeholder="资产名称"></strong>
+        <span>${escapeHtml(asset.type || '资产')}</span>
+      </div>
+      <p><textarea class="w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" data-field="prompt" rows="4">${escapeHtml(asset.prompt || '')}</textarea></p>
+      <small><input class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200" data-field="usage" value="${escapeHtml(asset.usage || '')}" placeholder="使用场景"></small>
+      <small>状态：<span data-field="status">${escapeHtml(asset.status || 'pending')}</span></small>
+      ${asset.task_url ? `<small>任务：<a class="text-sky-300 hover:text-sky-100" href="${escapeHtml(asset.task_url)}">查看任务 #${escapeHtml(asset.task_id || '')}</a></small>` : ''}
+      <div class="agent-action-row mt-2">
+        <button type="button" class="muted-button rounded-xl px-3 py-2 text-xs font-black" data-action="generate-asset" data-index="${index}">生成此资产</button>
+      </div>
+    </article>
+  `).join('') || '<div class="drama-log-empty">点击“开始解析”后，这里会显示角色、场景、道具资产。</div>';
+};
+
+const renderVideos = (rows) => {
+  state.videos = rows || [];
+  refs.videoGrid.innerHTML = state.videos.map((video, index) => `
+    <article class="drama-plan-card" data-video-index="${index}">
+      <div class="drama-plan-head">
+        <strong>镜头 ${escapeHtml(video.shot || index + 1)} · <input class="w-24 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-right text-sm text-slate-200" data-field="duration" value="${escapeHtml(video.duration || 5)}"> 秒</strong>
+        <span><input class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200" data-field="model" value="${escapeHtml(video.model || '')}" placeholder="视频模型"></span>
+      </div>
+      <p><textarea class="w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" data-field="prompt" rows="4">${escapeHtml(video.prompt || '')}</textarea></p>
+      <small>参考图：<input class="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200" data-field="reference_image" value="${escapeHtml(video.reference_image || '')}" placeholder="参考图说明"></small>
+      <small>状态：<span data-field="status">${escapeHtml(video.status || 'pending')}</span></small>
+      ${video.task_url ? `<small>任务：<a class="text-sky-300 hover:text-sky-100" href="${escapeHtml(video.task_url)}">查看任务 #${escapeHtml(video.task_id || '')}</a></small>` : ''}
+      <div class="agent-action-row mt-2">
+        <button type="button" class="muted-button rounded-xl px-3 py-2 text-xs font-black" data-action="generate-video" data-index="${index}">生成此视频</button>
+      </div>
+    </article>
+  `).join('') || '<div class="drama-log-empty">点击“开始解析”后，这里会显示视频生成计划。</div>';
+};
+
+const renderPostprocess = (rows) => {
+  state.postprocess = rows || [];
+  refs.postprocessList.innerHTML = state.postprocess.map((item) => `
+    <div class="drama-list-item">
+      <strong>${escapeHtml(item.step)} · ${escapeHtml(item.tool)}</strong>
+      <span>${escapeHtml(item.note)}</span>
+    </div>
+  `).join('') || '<div class="drama-log-empty">点击“开始后处理”后，这里会显示拼接和字幕烧录计划。</div>';
+};
+
+const updateFromResult = (data, fallbackStep) => {
+  if (data.logs) renderLogs(data.logs);
+  if (data.summary) {
+    state.summary = data.summary || state.summary || {};
+    state.characters = data.character_profiles || state.characters || [];
+    state.props = data.prop_profiles || state.props || [];
+    setStep(fallbackStep || 2);
+  }
+  if (data.storyboard) renderStoryboard(data.storyboard);
+  renderStoryboardPreview(data);
+  if (data.assets) renderAssets(data.assets);
+  if (data.videos) renderVideos(data.videos);
+  if (data.postprocess) renderPostprocess(data.postprocess);
+  if (data.markdown) state.markdown = data.markdown;
+  scheduleProjectSave();
+};
+
+const applyConfigToForm = (config) => {
+  if (!config) return;
+  if (refs.title) refs.title.value = config.title || refs.title.value || '';
+  if (refs.script) refs.script.value = config.script || refs.script.value || '';
+  if (refs.style) refs.style.value = config.style || refs.style.value || '';
+  const visualStyle = document.getElementById('dramaVisualStyle');
+  if (visualStyle && config.visual_style) visualStyle.value = config.visual_style;
+  if (refs.aspectRatio && config.aspect_ratio) refs.aspectRatio.value = config.aspect_ratio;
+  if (refs.imageSize && config.image_size) refs.imageSize.value = config.image_size;
+  if (refs.videoResolution && config.video_resolution) refs.videoResolution.value = config.video_resolution;
+  if (refs.imageConcurrency && config.image_concurrency) refs.imageConcurrency.value = config.image_concurrency;
+  if (refs.videoConcurrency && config.video_concurrency) refs.videoConcurrency.value = config.video_concurrency;
+  if (refs.audioConcurrency && config.audio_concurrency) refs.audioConcurrency.value = config.audio_concurrency;
+  if (config.text_provider && refs.providers.text) refs.providers.text.value = config.text_provider;
+  syncProviderGroup('text');
+  if (config.text_model && refs.providers.textModel) refs.providers.textModel.value = config.text_model;
+  if (config.image_provider && refs.providers.image) refs.providers.image.value = config.image_provider;
+  syncProviderGroup('image');
+  if (config.image_model && refs.providers.imageModel) refs.providers.imageModel.value = config.image_model;
+  if (config.video_provider && refs.providers.video) refs.providers.video.value = config.video_provider;
+  syncProviderGroup('video');
+  if (config.video_model && refs.providers.videoModel) refs.providers.videoModel.value = config.video_model;
+  if (config.asr_provider && refs.providers.asr) refs.providers.asr.value = config.asr_provider;
+  syncProviderGroup('asr');
+  if (config.asr_model && refs.providers.asrModel) refs.providers.asrModel.value = config.asr_model;
+  if (config.tts_provider && refs.providers.tts) refs.providers.tts.value = config.tts_provider;
+  syncProviderGroup('tts');
+  if (config.tts_model && refs.providers.ttsModel) refs.providers.ttsModel.value = config.tts_model;
+};
+
+const applyProjectPayload = (project) => {
+  if (!project) return;
+  state.projectId = project.id || state.projectId;
+  state.projectStatus = project.status || state.projectStatus || 'draft';
+  const payload = project.payload || project;
+  state.summary = payload.summary || state.summary || {};
+  state.characters = payload.character_profiles || state.characters || [];
+  state.props = payload.prop_profiles || state.props || [];
+  applyConfigToForm(payload);
+  if (payload.storyboard) renderStoryboard(payload.storyboard);
+  renderStoryboardPreview(payload);
+  if (payload.assets) renderAssets(payload.assets);
+  if (payload.videos) renderVideos(payload.videos);
+  if (payload.postprocess) renderPostprocess(payload.postprocess);
+  if (payload.logs) renderLogs(payload.logs);
+  if (payload.summary) state.markdown = payload.markdown || state.markdown;
+  if (payload.current_step || project.current_step) {
+    setStep(Number(payload.current_step || project.current_step || 1));
+  }
+};
+
+const postJson = async (url, body) => {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || data.message || '请求失败');
+  return data;
+};
+
+const fetchJson = async (url) => {
+  const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || data.message || '请求失败');
+  return data;
+};
+
+const currentProjectPayload = () => ({
+  ...makePayload(),
+  markdown: state.storyboardMarkdown || state.markdown || '',
+  current_step: state.step,
+  status: state.projectStatus || 'draft',
+  project_id: state.projectId,
+});
+
+const saveProject = async () => {
+  const payload = currentProjectPayload();
+  const data = await postJson(projectApi.save, payload);
+  if (data?.id) {
+    state.projectId = data.id;
+    state.projectStatus = data.status || state.projectStatus || 'draft';
+  }
+  if (data?.payload) {
+    renderProjectList([data, ...state.projectList.filter((item) => Number(item.id) !== Number(data.id))]);
+  } else {
+    await refreshProjectList();
+  }
+  return data;
+};
+
+const scheduleProjectSave = () => {
+  clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(() => {
+    saveProject().catch(() => {});
+  }, 900);
+};
+
+const refreshProjectList = async () => {
+  try {
+    const data = await fetchJson(projectApi.list);
+    renderProjectList(data.projects || []);
+  } catch (error) {
+    appendLog('故事版列表', `加载失败：${error.message || String(error)}`);
+  }
+};
+
+const loadProject = async (projectId) => {
+  if (!projectId) return;
+  const data = await fetchJson(projectApi.detail(projectId));
+  applyProjectPayload(data);
+  renderProjectList([data, ...state.projectList.filter((item) => Number(item.id) !== Number(data.id))]);
+  scheduleProjectSave();
+};
+
+const deleteProject = async (projectId) => {
+  if (!projectId) return;
+  const ok = window.confirm('确定删除这个故事版项目吗？');
+  if (!ok) return;
+  await fetch(`/api/agents/drama-storyboard/projects/${projectId}`, { method: 'DELETE' });
+  const data = await fetchJson(projectApi.list);
+  const rows = data.projects || [];
+  renderProjectList(rows);
+  if (Number(state.projectId) === Number(projectId)) {
+    const nextProject = rows[0] || null;
+    if (nextProject) {
+      await loadProject(nextProject.id);
+    } else {
+      refs.newProjectButton?.click();
+    }
+  }
+};
+
+const collectStoryboardRows = () => (state.storyboard || []).map((shot, index) => ({
+  index: Number(shot?.index || index + 1),
+  duration: shot?.duration || 5,
+  scene: shot?.scene || '',
+  action: shot?.action || '',
+  characters: Array.isArray(shot?.characters) ? shot.characters : [],
+  camera: shot?.camera || '',
+  video_prompt: shot?.video_prompt || '',
+}));
+
+const collectAssetsRows = () => Array.from(refs.assetGrid.querySelectorAll('[data-asset-index]')).map((card, index) => ({
+  index: index + 1,
+  name: card.querySelector('[data-field="name"]')?.value || '',
+  type: state.assets[index]?.type || '资产',
+  prompt: card.querySelector('[data-field="prompt"]')?.value || '',
+  usage: card.querySelector('[data-field="usage"]')?.value || '',
+  status: card.querySelector('[data-field="status"]')?.textContent || 'pending',
+  task_id: state.assets[index]?.task_id || '',
+  task_url: state.assets[index]?.task_url || '',
+  result_url: state.assets[index]?.result_url || '',
+}));
+
+const collectVideosRows = () => Array.from(refs.videoGrid.querySelectorAll('[data-video-index]')).map((card, index) => ({
+  shot: index + 1,
+  duration: card.querySelector('[data-field="duration"]')?.value || 5,
+  prompt: card.querySelector('[data-field="prompt"]')?.value || '',
+  model: card.querySelector('[data-field="model"]')?.value || '',
+  reference_image: card.querySelector('[data-field="reference_image"]')?.value || '',
+  status: card.querySelector('[data-field="status"]')?.textContent || 'pending',
+  task_id: state.videos[index]?.task_id || '',
+  task_url: state.videos[index]?.task_url || '',
+  result_url: state.videos[index]?.result_url || '',
+}));
+
+const makePayload = () => ({
+  ...collectConfig(),
+  storyboard: collectStoryboardRows(),
+  assets: collectAssetsRows(),
+  videos: collectVideosRows(),
+  postprocess: state.postprocess,
+});
+
+const generateSingleAsset = async (index) => {
+  const asset = collectAssetsRows()[index];
+  if (!asset) return;
+  try {
+    const data = await postJson('/api/agents/drama-storyboard/generate-asset', { ...asset, config: collectConfig() });
+    state.assets[index] = {
+      ...(state.assets[index] || {}),
+      ...asset,
+      status: 'queued',
+      task_id: data.task_id,
+      task_url: data.task_url,
+    };
+    renderAssets(state.assets);
+    appendLog('资产生成', `资产 #${index + 1} 已创建任务 ${data.task_id}，后台失败会自动重试 2 次，间隔约 3 秒。`);
+    return data;
+  } catch (error) {
+    state.assets[index] = { ...(state.assets[index] || {}), ...asset, status: 'failed' };
+    renderAssets(state.assets);
+    appendLog('资产生成失败', `资产 #${index + 1} 创建任务失败：${error.message || String(error)}`);
+    throw error;
+  }
+};
+
+const generateSingleVideo = async (index) => {
+  const video = collectVideosRows()[index];
+  if (!video) return;
+  try {
+    const data = await postJson('/api/agents/drama-storyboard/generate-video', { ...video, config: collectConfig() });
+    state.videos[index] = {
+      ...(state.videos[index] || {}),
+      ...video,
+      status: 'queued',
+      task_id: data.task_id,
+      task_url: data.task_url,
+    };
+    renderVideos(state.videos);
+    appendLog('视频生成', `镜头 #${index + 1} 已创建任务 ${data.task_id}，后台失败会自动重试 2 次，间隔约 3 秒。`);
+    return data;
+  } catch (error) {
+    state.videos[index] = { ...(state.videos[index] || {}), ...video, status: 'failed' };
+    renderVideos(state.videos);
+    appendLog('视频生成失败', `镜头 #${index + 1} 创建任务失败：${error.message || String(error)}`);
+    throw error;
+  }
+};
+
+const readConcurrency = (input) => {
+  const value = Number(input?.value || 2);
+  if (!Number.isFinite(value)) return 2;
+  return Math.max(1, Math.min(8, Math.floor(value)));
+};
+
+const batchRun = async (count, runner, limit) => {
+  const running = [];
+  for (let index = 0; index < count; index += 1) {
+    const task = runner(index);
+    running.push(task);
+    if (running.length >= limit) {
+      await Promise.allSettled(running.splice(0, running.length));
+      await sleep(3000);
+    }
+  }
+  if (running.length) {
+    await Promise.allSettled(running);
+  }
+};
+
+refs.storyboardStart?.addEventListener('click', async () => {
+  refs.storyboardStart.disabled = true;
+  refs.storyboardStart.textContent = '解析中';
+  const modelName = refs.providers.textModel?.value || '文本模型';
+  renderLogs([
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'project', message: '创建项目...' },
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'ws', message: 'WebSocket 已连接' },
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'storyboard', message: '开始分镜...' },
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'model', message: `${modelName} 正在分镜...` },
+  ]);
+  try {
+    const data = await postJson('/api/agents/drama-storyboard/storyboard', makePayload());
+    updateFromResult(data, 2);
+    scheduleProjectSave();
+  } catch (error) {
+    renderLogs([{ stage: '失败', message: error.message || String(error) }]);
+  } finally {
+    refs.storyboardStart.disabled = false;
+    refs.storyboardStart.textContent = '开始分镜';
+  }
+});
+
+refs.storyboardRefresh?.addEventListener('click', async () => {
+  renderLogs([...(state.logs || []), { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'storyboard', message: '正在解析当前分镜中的角色、场景和道具资产。' }]);
+  try {
+    const data = await postJson('/api/agents/drama-storyboard/assets', makePayload());
+    renderAssets(data.assets || []);
+    renderLogs([...(state.logs || []), ...(data.logs || [])]);
+    setStep(3);
+    scheduleProjectSave();
+  } catch (error) {
+    renderLogs([{ stage: '失败', message: error.message || String(error) }]);
+  }
+});
+
+refs.storyboardCopy?.addEventListener('click', async () => {
+  if (!state.storyboardMarkdown) return;
+  await navigator.clipboard?.writeText(state.storyboardMarkdown);
+  refs.storyboardCopy.textContent = '已复制';
+  setTimeout(() => { refs.storyboardCopy.textContent = '复制 Markdown'; }, 1200);
+});
+
+refs.videoPlan?.addEventListener('click', async () => {
+  renderLogs([...(state.logs || []), { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'video', message: '正在根据当前分镜和资产计划生成视频组。' }]);
+  try {
+    const data = await postJson('/api/agents/drama-storyboard/videos', makePayload());
+    renderVideos(data.videos || []);
+    renderLogs([...(state.logs || []), ...(data.logs || [])]);
+    setStep(4);
+    scheduleProjectSave();
+  } catch (error) {
+    renderLogs([{ stage: '失败', message: error.message || String(error) }]);
+  }
+});
+
+refs.assetBatch?.addEventListener('click', async () => {
+  const items = collectAssetsRows();
+  const limit = readConcurrency(refs.imageConcurrency);
+  renderLogs([...(state.logs || []), { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'asset', message: `开始批量生成 ${items.length} 个资产。并发限制 ${limit}，每批间隔约 3 秒。` }]);
+  await batchRun(items.length, (index) => generateSingleAsset(index), limit);
+  scheduleProjectSave();
+});
+
+refs.videoBatch?.addEventListener('click', async () => {
+  const items = collectVideosRows();
+  const limit = readConcurrency(refs.videoConcurrency);
+  renderLogs([...(state.logs || []), { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'video', message: `开始批量生成 ${items.length} 个视频。并发限制 ${limit}，每批间隔约 3 秒。` }]);
+  await batchRun(items.length, (index) => generateSingleVideo(index), limit);
+  scheduleProjectSave();
+});
+
+refs.postprocessButton?.addEventListener('click', async () => {
+  renderLogs([...(state.logs || []), { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'postprocess', message: '正在生成视频拼接和字幕烧录计划。' }]);
+  try {
+    const data = await postJson('/api/agents/drama-storyboard/postprocess', makePayload());
+    renderPostprocess(data.postprocess || []);
+    renderLogs([...(state.logs || []), ...(data.logs || [])]);
+    setStep(5);
+    scheduleProjectSave();
+  } catch (error) {
+    renderLogs([{ stage: '失败', message: error.message || String(error) }]);
+  }
+});
+
+refs.newProjectButton?.addEventListener('click', () => {
+  state.projectId = null;
+  state.projectStatus = 'draft';
+  state.step = 1;
+  state.summary = {};
+  state.characters = [];
+  state.props = [];
+  state.storyboard = [];
+  state.assets = [];
+  state.videos = [];
+  state.postprocess = [];
+  state.logs = [];
+  state.markdown = '';
+  refs.form?.reset?.();
+  ['text', 'image', 'video', 'asr', 'tts'].forEach((key) => syncProviderGroup(key));
+  setStep(1);
+  renderStoryboard([]);
+  renderAssets([]);
+  renderVideos([]);
+  renderPostprocess([]);
+  renderLogs([
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'project', message: '创建项目...' },
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'ws', message: 'WebSocket 已连接' },
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'storyboard', message: '等待开始分镜' },
+  ]);
+  renderStoryboardStats();
+});
+
+refs.stepIndicators?.forEach((node) => {
+  node.addEventListener('click', () => {
+    const step = Number(node.dataset.stepIndicator || 1);
+    setStep(step);
+    scrollToStep(step);
+    scheduleProjectSave();
+  });
+});
+
+refs.assetGrid?.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-action="generate-asset"]');
+  if (!button) return;
+  await generateSingleAsset(Number(button.dataset.index || 0));
+});
+
+refs.videoGrid?.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-action="generate-video"]');
+  if (!button) return;
+  await generateSingleVideo(Number(button.dataset.index || 0));
+});
+
+refs.projectList?.addEventListener('click', async (event) => {
+  const card = event.target.closest('[data-project-id]');
+  if (!card) return;
+  await loadProject(Number(card.dataset.projectId));
+});
+
+refs.projectList?.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-delete-project-id]');
+  if (!button) return;
+  event.stopPropagation();
+  await deleteProject(Number(button.dataset.deleteProjectId));
+});
+
+refs.form?.addEventListener('input', () => {
+  scheduleProjectSave();
+});
+
+syncAllProviders();
+renderProjectList(initialProjects);
+applyProjectPayload(initialProject);
+if (!initialProject?.id) {
+  renderLogs([
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'project', message: '创建项目...' },
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'ws', message: 'WebSocket 已连接' },
+    { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), stage: 'storyboard', message: '请先完成模型和参数配置，然后点击“开始分镜”。' },
+  ]);
+}
+refs.form?.addEventListener('change', () => scheduleProjectSave());
+
+setStep(Number(initialProject?.current_step || 1));
+renderStoryboardPreview(initialProject?.payload || initialProject || {});
+</script>
+{% endblock %}

@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.routes.account import router as account_router
 from app.routes.admin import router as admin_router
+from app.routes.agents import router as agents_router
 from app.routes.ai_tools import router as ai_tools_router
 from app.routes.auth import router as auth_router
 from app.routes.creative import router as creative_router
@@ -43,6 +44,7 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 app.mount("/media", StaticFiles(directory=str(settings.media_path)), name="media")
 app.include_router(account_router)
 app.include_router(admin_router)
+app.include_router(agents_router)
 app.include_router(ai_tools_router)
 app.include_router(auth_router)
 app.include_router(creative_router)
@@ -62,4 +64,3 @@ async def healthz() -> dict[str, str]:
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> FileResponse:
     return FileResponse(BASE_DIR / "asset" / "logo.png", media_type="image/png")
-

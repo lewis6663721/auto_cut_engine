@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="drama-page">
+  <div class="mb-6 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/agents" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回智能体</a>
+      <h1 class="page-title mt-3 font-black text-white">脚本分镜智能体</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">按 HappyHorse 分镜 skill 的标准格式输出，包含强制前置校验表、角色档案、道具档案、素材提示词、完整分组提示词和三重自检。</p>
+    </div>
+    <a href="/agents/drama-storyboard" class="muted-button rounded-xl px-5 py-3 text-sm font-black">短剧故事版</a>
+  </div>
+
+  <div class="drama-layout">
+    <div class="drama-main">
+      <form id="scriptStoryboardForm" class="tool-config-panel drama-form-panel">
+        <div class="tool-section">
+          <h2>脚本</h2>
+          <label class="tool-field">标题
+            <input id="scriptStoryboardTitle" value="强一致性分镜草案">
+          </label>
+          <label class="tool-field">脚本正文
+            <textarea id="scriptStoryboardText" rows="12">女主在公司发现项目文件被删除，男主误会她泄密。女主调出监控证明文件被同事动过手脚。男主意识到误会，挡在女主身前，要求重新调查。</textarea>
+          </label>
+          <label class="tool-field">上传剧本文件（可选）
+            <input id="scriptStoryboardFile" type="file" accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+          </label>
+          <div class="tool-hint">短剧本可以直接粘贴到文本框；长剧本可上传 txt 或 docx，文本框为空时会优先读取文件内容。</div>
+        </div>
+
+        <div class="tool-section">
+          <label class="tool-field">视觉风格（可选）
+            <select id="scriptStoryboardStyle">
+              {% set style_options = visual_styles or ["自动判断", "现代都市影视风格", "古装仙侠影视风格", "超写实真人电影风格", "暗黑悬疑影视风格", "二次元动漫风格", "复古年代影视风格", "赛博朋克科幻风格"] %}
+              {% for item in style_options %}
+                <option value="{{ item }}">{{ item }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="tool-hint">默认自动判断，系统会按剧本内容识别合适的视觉风格。</div>
+        </div>
+
+        <details class="guest-provider-panel" data-storyboard-model-panel>
+          <summary class="guest-provider-head">
+            <div>
+              <strong>模型配置</strong>
+              <span>从用户中心已配置的供应商中选择文本模型</span>
+            </div>
+            <div class="guest-provider-actions">
+              <span class="muted-button rounded-xl px-4 py-2 text-sm font-black" data-model-panel-toggle-label>展开</span>
+            </div>
+          </summary>
+          <div class="guest-provider-body">
+            <div class="guest-provider-grid">
+              <label>
+                <span>供应商</span>
+                <select id="storyboardProvider">
+                  {% if providers %}
+                    {% for provider in providers %}
+                      <option value="{{ provider.id }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.model }}" data-model-options='{{ provider.model_options | tojson }}'>{{ provider.display_label or provider.label }}</option>
+                    {% endfor %}
+                  {% else %}
+                    <option value="">请先去用户中心配置文本模型</option>
+                  {% endif %}
+                </select>
+              </label>
+              <label data-storyboard-model-field>
+                <span>模型</span>
+                <select id="storyboardModel"></select>
+              </label>
+            </div>
+            <p class="guest-provider-status" data-storyboard-provider-status>这里直接读取用户中心已配置的供应商和文本模型。</p>
+          </div>
+        </details>
+
+        <div class="tool-section">
+          <h2>执行方式</h2>
+          <div class="agent-action-row">
+            <button id="scriptStoryboardSync" class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit" data-mode="sync">同步生成分镜</button>
+            <button id="scriptStoryboardAsync" class="muted-button rounded-xl px-5 py-3 text-sm font-black" type="submit" data-mode="async">异步生成任务</button>
+          </div>
+          <div class="tool-hint">镜头数量由分镜逻辑按剧本语义自动拆分；当前智能体只生成分镜和提示词资料，不会调用真实视频生成接口。</div>
+          <div id="scriptStoryboardTaskLink" class="agent-task-link hidden"></div>
+        </div>
+      </form>
+
+      <section id="scriptStoryboardResult" class="drama-result-panel hidden">
+        <div class="drama-result-head">
+          <div>
+            <strong>输出结果</strong>
+            <span id="scriptStoryboardMeta">等待生成</span>
+          </div>
+          <button id="scriptStoryboardCopy" class="muted-button rounded-xl px-4 py-2 text-sm font-black" type="button">复制 Markdown</button>
+        </div>
+        <pre id="scriptStoryboardOutput" class="drama-markdown-preview"></pre>
+      </section>
+    </div>
+
+    <aside class="subtitle-preview-panel drama-log-panel">
+      <div class="agent-result-head">
+        <div>
+          <strong>格式说明</strong>
+          <span>输出顺序与 skill_res.md 保持一致</span>
+        </div>
+      </div>
+      <div id="scriptStoryboardLogs" class="drama-log-list">
+        <div class="drama-log-empty">包含：强制前置校验表、角色档案、道具档案、素材提示词、完整分组提示词、三重一致性质量自检。</div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<script>
+const esc = (value) => String(value || '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}[char]));
+
+const scriptForm = document.getElementById('scriptStoryboardForm');
+const scriptSync = document.getElementById('scriptStoryboardSync');
+const scriptAsync = document.getElementById('scriptStoryboardAsync');
+const scriptResult = document.getElementById('scriptStoryboardResult');
+const scriptMeta = document.getElementById('scriptStoryboardMeta');
+const scriptLogs = document.getElementById('scriptStoryboardLogs');
+const scriptOutput = document.getElementById('scriptStoryboardOutput');
+const scriptCopy = document.getElementById('scriptStoryboardCopy');
+const scriptTaskLink = document.getElementById('scriptStoryboardTaskLink');
+const storyboardProvider = document.getElementById('storyboardProvider');
+const storyboardModel = document.getElementById('storyboardModel');
+const storyboardModelPanel = document.querySelector('[data-storyboard-model-panel]');
+const storyboardModelToggleLabel = document.querySelector('[data-model-panel-toggle-label]');
+const storyboardProviderStatus = document.querySelector('[data-storyboard-provider-status]');
+let scriptMarkdown = '';
+let scriptSubmitMode = 'sync';
+
+const syncStoryboardModelOptions = () => {
+  if (!storyboardProvider || !storyboardModel) return;
+  const option = storyboardProvider.selectedOptions?.[0];
+  const models = JSON.parse(option?.dataset.modelOptions || '[]');
+  const selectedModel = option?.dataset.model || '';
+  storyboardModel.innerHTML = (models || []).map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join('') || '<option value="">请先在用户中心配置该供应商的文本模型</option>';
+  storyboardModel.disabled = (models || []).length === 0;
+  if (selectedModel && (models || []).includes(selectedModel)) {
+    storyboardModel.value = selectedModel;
+  } else if ((models || []).length) {
+    storyboardModel.value = models[0];
+  }
+  if (storyboardProviderStatus) {
+    storyboardProviderStatus.textContent = option?.dataset.baseUrl
+      ? '已读取用户中心配置，可以直接选择模型。'
+      : '当前供应商未配置完成，请先到用户中心补齐配置。';
+  }
+};
+
+const renderScriptLogs = (logs) => {
+  scriptLogs.innerHTML = (logs || []).map((item, index) => `
+    <div class="drama-log-item">
+      <span class="drama-log-index">${index + 1}</span>
+      <div><strong>${esc(item.stage)}</strong><p>${esc(item.message)}</p></div>
+    </div>
+  `).join('') || '<div class="drama-log-empty">暂无日志。</div>';
+};
+
+scriptCopy?.addEventListener('click', async () => {
+  if (!scriptMarkdown) return;
+  await navigator.clipboard?.writeText(scriptMarkdown);
+  scriptCopy.textContent = '已复制';
+  setTimeout(() => { scriptCopy.textContent = '复制 Markdown'; }, 1200);
+});
+
+[scriptSync, scriptAsync].forEach((button) => {
+  button?.addEventListener('click', () => {
+    scriptSubmitMode = button.dataset.mode || 'sync';
+  });
+});
+
+storyboardProvider?.addEventListener('change', syncStoryboardModelOptions);
+storyboardModelPanel?.addEventListener('toggle', () => {
+  if (storyboardModelToggleLabel) {
+    storyboardModelToggleLabel.textContent = storyboardModelPanel.open ? '收起' : '展开';
+  }
+});
+syncStoryboardModelOptions();
+
+scriptForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  [scriptSync, scriptAsync].forEach((button) => { if (button) button.disabled = true; });
+  const activeButton = scriptSubmitMode === 'async' ? scriptAsync : scriptSync;
+  const idleLabel = scriptSubmitMode === 'async' ? '异步生成任务' : '同步生成分镜';
+  if (activeButton) activeButton.textContent = scriptSubmitMode === 'async' ? '提交中' : '生成中';
+  scriptTaskLink.classList.add('hidden');
+  scriptTaskLink.innerHTML = '';
+  renderScriptLogs([{ stage: '提交', message: scriptSubmitMode === 'async' ? '正在创建异步分镜任务。' : '正在生成脚本分镜。' }]);
+  try {
+    const formData = new FormData();
+    formData.append('mode', scriptSubmitMode);
+    formData.append('title', document.getElementById('scriptStoryboardTitle')?.value || '');
+    formData.append('script', document.getElementById('scriptStoryboardText')?.value || '');
+    formData.append('visual_style', document.getElementById('scriptStoryboardStyle')?.value || '自动判断');
+    formData.append('provider', storyboardProvider?.value || '');
+    formData.append('model', storyboardModel?.value || '');
+    const file = document.getElementById('scriptStoryboardFile')?.files?.[0];
+    if (file) formData.append('script_file', file);
+    const response = await fetch('/agents/storyboard/run', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || data.message || '分镜生成失败');
+    if (scriptSubmitMode === 'async') {
+      renderScriptLogs([{ stage: '已创建任务', message: `任务 #${data.task_id} 已进入任务中心。` }]);
+      scriptTaskLink.classList.remove('hidden');
+      scriptTaskLink.innerHTML = `<a class="gradient-action rounded-xl px-4 py-2 text-sm font-black" href="${esc(data.task_url)}">跳转到任务详情</a>`;
+      return;
+    }
+    scriptMarkdown = data.formatted_text || data.markdown || '';
+    scriptResult.classList.remove('hidden');
+    scriptMeta.textContent = `${data.summary?.title || '脚本分镜'} · ${data.summary?.shot_count || 0} 镜`;
+    renderScriptLogs(data.logs);
+    scriptOutput.textContent = scriptMarkdown;
+  } catch (error) {
+    renderScriptLogs([{ stage: '失败', message: error.message || String(error) }]);
+  } finally {
+    [scriptSync, scriptAsync].forEach((button) => { if (button) button.disabled = false; });
+    if (activeButton) activeButton.textContent = idleLabel;
+  }
+});
+</script>
+{% endblock %}

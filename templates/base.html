@@ -9,7 +9,7 @@
   <meta name="application-name" content="{{ site_name or '剪·AI' }}">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/css/app.css?v=20260730-entertainment">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260821-drama-stepper1">
 </head>
 <body class="min-h-screen text-slate-100">
   <header class="sticky top-0 z-40 app-nav">
@@ -21,6 +21,9 @@
       <div class="nav-menu">
         <a class="nav-link" href="/">首页</a>
         <a class="nav-link" href="/entertainment">娱乐广场</a>
+        {% if user %}
+        <a class="nav-link" href="/agents">智能体</a>
+        {% endif %}
         <div class="nav-group">
           <button class="nav-group-button" type="button" aria-haspopup="true">创作工作台<i data-lucide="chevron-down"></i></button>
           <div class="nav-dropdown">
@@ -63,7 +66,7 @@
   <main class="app-shell page-block">
     {% block content %}{% endblock %}
   </main>
-  <footer class="border-t border-slate-800/70 py-8 text-center text-sm text-slate-600">
+  <footer class="site-footer border-t border-slate-800/70 py-8 text-center text-sm text-slate-600">
     {{ site_name or "剪·AI" }} - 将剪辑经验代码化、资产化、自动化
   </footer>
   {% if user %}
@@ -101,7 +104,61 @@
     </section>
   </aside>
   {% endif %}
-  <script>lucide.createIcons();</script>
+  <script>
+  (() => {
+    const svgAttrs = 'width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+    const fallbackPaths = {
+      'chevron-down': '<path d="m6 9 6 6 6-6"></path>',
+      'chevron-left': '<path d="m15 18-6-6 6-6"></path>',
+      'x': '<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>',
+      'plus': '<path d="M12 5v14"></path><path d="M5 12h14"></path>',
+      'check': '<path d="m20 6-11 11-5-5"></path>',
+      'play': '<path d="m8 5 12 7-12 7Z"></path>',
+      'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5 5 5-5"></path><path d="M12 15V3"></path>',
+      'upload': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m17 8-5-5-5 5"></path><path d="M12 3v12"></path>',
+      'scissors': '<circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M20 4 8.1 15.9"></path><path d="m14.5 14.5 5.5 5.5"></path>',
+      'clapperboard': '<path d="M20.2 6 3 11l-.8-2.8a2 2 0 0 1 1.4-2.5l12.8-3.4a2 2 0 0 1 2.5 1.4Z"></path><path d="M6.2 5.3 9 10"></path><path d="m12.4 3.7 2.8 4.8"></path><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>',
+      'panels-top-left': '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path><path d="M9 21V9"></path>',
+      'image': '<rect width="18" height="18" x="3" y="3" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path>',
+      'video': '<path d="m22 8-6 4 6 4V8Z"></path><rect width="14" height="12" x="2" y="6" rx="2"></rect>',
+      'film': '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M7 3v18"></path><path d="M17 3v18"></path><path d="M3 7h4"></path><path d="M17 7h4"></path><path d="M3 12h18"></path><path d="M3 17h4"></path><path d="M17 17h4"></path>',
+      'brain': '<path d="M12 5a3 3 0 0 0-5.6-1.5A3 3 0 0 0 4 8v8a3 3 0 0 0 5.6 1.5A3 3 0 0 0 12 19Z"></path><path d="M12 5a3 3 0 0 1 5.6-1.5A3 3 0 0 1 20 8v8a3 3 0 0 1-5.6 1.5A3 3 0 0 1 12 19Z"></path>',
+      'sparkles': '<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"></path><path d="M5 3v4"></path><path d="M3 5h4"></path><path d="M19 17v4"></path><path d="M17 19h4"></path>',
+      'messages-square': '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path>',
+      'bot': '<path d="M12 2v2"></path><rect x="6" y="6" width="12" height="10" rx="3"></rect><path d="M9 20v-2"></path><path d="M15 20v-2"></path><path d="M8 10h.01"></path><path d="M16 10h.01"></path>',
+      'palette': '<path d="M12 3a9 9 0 1 0 0 18h2a2 2 0 0 0 0-4h-1a2 2 0 0 1 0-4h1a4 4 0 0 0 0-8Z"></path><circle cx="7.5" cy="9.5" r="1"></circle><circle cx="10.5" cy="7.5" r="1"></circle><circle cx="15.5" cy="8.5" r="1"></circle>',
+      'waveform': '<path d="M3 12h3l2-6 4 12 2-8 1 2h6"></path>',
+      'audio-waveform': '<path d="M3 12h2l2-5 4 10 2-7 2 4h6"></path>',
+      'screen-share': '<rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M8 21h8"></path><path d="M12 17v4"></path><path d="M8 9h8"></path>',
+      'type': '<path d="M4 7V5h16v2"></path><path d="M9 5v14"></path><path d="M7 19h4"></path><path d="M13 19h4"></path>',
+      'image-plus': '<rect x="3" y="3" width="18" height="14" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="m21 15-4-4-5 5"></path><path d="M12 21v-6"></path><path d="M9 18h6"></path>',
+      'land-plot': '<path d="M3 18h18"></path><path d="m3 18 6-6 4 4 5-7 3 3"></path><path d="M5 18V7"></path>',
+      'audio-lines': '<path d="M4 10h4"></path><path d="M4 14h8"></path><path d="M4 18h6"></path><path d="M14 6v12"></path><path d="M18 9v6"></path>',
+      'settings': '<path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.4 1Z"></path>',
+    };
+    const fallbackIcon = (name) => `<svg ${svgAttrs}>${fallbackPaths[name] || '<circle cx="12" cy="12" r="8"></circle><path d="M12 8v8"></path><path d="M8 12h8"></path>'}</svg>`;
+    const createFallbackIcons = () => {
+      document.querySelectorAll('i[data-lucide]').forEach((node) => {
+        const name = node.getAttribute('data-lucide') || '';
+        const wrapper = document.createElement('span');
+        wrapper.setAttribute('data-lucide-fallback', name);
+        wrapper.innerHTML = fallbackIcon(name);
+        node.replaceWith(wrapper.firstElementChild);
+      });
+    };
+    window.renderAppIcons = () => {
+      if (window.lucide?.createIcons && !window.lucide.__fallback) {
+        window.lucide.createIcons();
+      } else {
+        createFallbackIcons();
+      }
+    };
+    if (!window.lucide) {
+      window.lucide = { __fallback: true, createIcons: createFallbackIcons };
+    }
+    window.renderAppIcons();
+  })();
+  </script>
   {% if user %}
   <script>
   (() => {

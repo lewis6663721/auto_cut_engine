@@ -16,6 +16,8 @@
 
 ## 项目概述
 
+> 重要开发约束：后续所有新增或修改都必须优先保护已有功能，不得为了局部调整而破坏、弱化或悄然改变任何无关的既有行为。
+
 AutoCut Engine 是一个企业级智能视频剪辑平台，采用前后端不分离的 SSR 架构（FastAPI + Jinja2 + TailwindCSS 暗黑毛玻璃风）。通过维度化配置系统，将抽象的审美标准转化为可勾选、可调参的机器指令，由 FFmpeg 渲染引擎异步执行。
 
 ### 核心能力
@@ -335,6 +337,7 @@ auto_cut_engine/
 │   ├── routes/account.py            # 用户中心、AI Provider 保存 / 删除 / 心跳检测
 │   ├── routes/admin.py              # 管理后台：模板管理、维度重置
 │   ├── routes/ai_tools.py           # AI 工具包页面 / API
+│   ├── routes/agents.py             # 智能体首页、脚本分镜、短剧故事版、脚本文件上传 / 异步任务入口
 │   ├── routes/auth.py               # 登录、注册、退出路由
 │   ├── routes/creative.py           # 创意坊页面 / API
 │   ├── routes/editor.py             # 剪辑台路由聚合入口
@@ -410,6 +413,9 @@ auto_cut_engine/
 
 ### RenderTask
 `id` / `user_id`(FK) / `template_id`(FK) / `source_asset_id`(FK) / `applied_config`(JSON) / `ai_context`(JSON) / `status`(pending/processing/success/failed) / `progress` / `result_url` / `error_log` / `created_at` / `completed_at`
+
+### DramaStoryboardProject
+`id` / `user_id`(FK) / `title` / `current_step` / `status`(draft/ready/archived) / `payload`(JSON, 含配置、分镜、资产、视频、后处理和日志) / `created_at` / `updated_at`
 
 ### AiProviderCredential
 `id` / `user_id`(FK) / `provider_key` / `label` / `base_url` / `api_key_secret` / `default_chat_model` / `default_asr_model` / `default_image_model` / `default_video_model` / `capabilities`(JSON) / `is_enabled` / `last_status` / `last_message` / `last_checked_at` / `created_at`

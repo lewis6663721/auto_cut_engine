@@ -81,21 +81,21 @@ def toolkit_tools() -> list[dict[str, Any]]:
             "key": "burn_subtitles",
             "group": "edit",
             "label": "字幕烧录",
-            "icon": "subtitles",
+            "icon": "type",
             "description": "上传视频和字幕稿，直接烧录成带字幕的视频成品。",
         },
         {
             "key": "concat_videos",
             "group": "edit",
             "label": "视频拼接",
-            "icon": "merge",
+            "icon": "layers-3",
             "description": "把多段视频按顺序拼成一个文件。",
         },
         {
             "key": "extract_audio",
             "group": "edit",
             "label": "提取音频",
-            "icon": "music-4",
+            "icon": "audio-lines",
             "description": "从视频中提取音轨，输出 mp3。",
         },
     ]
@@ -107,7 +107,7 @@ def ai_tools() -> list[dict[str, Any]]:
             "key": "chat_assistant",
             "group": "chat",
             "label": "AI 对话助手",
-            "icon": "messages-square",
+            "icon": "bot",
             "description": "调用 Qwen / GPT 等聊天模型，辅助生成剪辑思路、提示词和脚本。",
         },
         {
@@ -121,21 +121,21 @@ def ai_tools() -> list[dict[str, Any]]:
             "key": "text_image_generation",
             "group": "image",
             "label": "文生图",
-            "icon": "image",
+            "icon": "image-plus",
             "description": "输入画面描述，调用支持图片生成的厂商模型生成图片。",
         },
         {
             "key": "text_video_generation",
             "group": "video",
             "label": "文生视频",
-            "icon": "video",
+            "icon": "film",
             "description": "输入分镜提示词，调用支持文生视频的模型生成视频。",
         },
         {
             "key": "reference_video_generation",
             "group": "video",
             "label": "参考生视频",
-            "icon": "film",
+            "icon": "land-plot",
             "description": "上传参考图片和提示词，调用支持视频生成的厂商模型，生成参考驱动的视频。",
         },
         {
@@ -272,11 +272,11 @@ async def run_tool_task(task_id: int) -> RenderTask:
         elif tool_key == "video_transcription":
             result = await video_transcription_task(task)
         elif tool_key == "text_image_generation":
-            result = await text_image_generation_task(task)
+            result = await generation_task_with_retry(task, "图片生成", text_image_generation_task)
         elif tool_key == "text_video_generation":
-            result = await text_video_generation_task(task)
+            result = await generation_task_with_retry(task, "文生视频", text_video_generation_task)
         elif tool_key == "reference_video_generation":
-            result = await reference_video_generation_task(task)
+            result = await generation_task_with_retry(task, "参考生视频", reference_video_generation_task)
         elif tool_key == "voice_clone_tts":
             result = await voice_clone_tts_task(task)
         else:
@@ -312,6 +312,23 @@ async def run_tool_task(task_id: int) -> RenderTask:
 
 def run_tool_task_sync(task_id: int) -> int:
     return asyncio.run(run_tool_task(task_id)).id
+
+
+async def generation_task_with_retry(task: RenderTask, label: str, runner: Any) -> ToolResult:
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            context = dict(task.ai_context or {})
+            context["retry_attempt"] = attempt
+            context["retry_max_attempts"] = max_attempts
+            await task.update_from_dict({"ai_context": context}).save()
+            return await runner(task)
+        except Exception as exc:
+            if attempt >= max_attempts:
+                raise
+            await _update_task(task, min(88, 28 + attempt * 18), f"{label}失败，3 秒后第 {attempt + 1}/{max_attempts} 次重试：{str(exc)[:120]}")
+            await asyncio.sleep(3)
+    raise RuntimeError(f"{label}重试失败")
 
 
 async def burn_subtitles_task(task: RenderTask) -> ToolResult:

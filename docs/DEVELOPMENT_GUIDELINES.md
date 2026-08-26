@@ -15,6 +15,7 @@ Coding agents must follow the project-level `CLAUDE.md` behavior contract:
 - Think before coding: state meaningful assumptions, surface multiple interpretations, and ask when ambiguity is risky.
 - Prefer simple implementations: no speculative features, one-off abstractions, or unnecessary configurability.
 - Make surgical changes: touch only files and lines required by the user request, match existing style, and avoid unrelated refactors.
+- Preserve existing behavior: when adding or modifying any feature, do not break, weaken, or silently alter unrelated existing functionality.
 - Clean up only your own mess: remove imports, variables, functions, or files made unused by your change; do not delete pre-existing unrelated dead code unless asked.
 - Work from verifiable goals: bug fixes should include focused reproduction or regression checks when practical, and multi-step tasks should have a short plan plus verification.
 

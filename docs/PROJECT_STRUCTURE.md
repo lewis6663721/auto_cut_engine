@@ -6,7 +6,7 @@ auto_cut_engine/
 ├── auth.py                  # 登录、Session、权限校验
 ├── config.py                # 环境变量和路径配置
 ├── database.py              # Tortoise ORM 初始化
-├── models.py                # ORM 模型，含娱乐广场游客调用日志 EntertainmentLog
+├── models.py                # ORM 模型，含娱乐广场游客调用日志 EntertainmentLog、短剧故事版工程快照
 ├── tasks.py                 # Celery 任务入口
 ├── seed_data.py             # 种子用户、模板、音效、维度
 ├── app/                     # 逐步拆分的新应用层
@@ -88,3 +88,4 @@ auto_cut_engine/
 - 每次开发前先阅读根目录 `AGENTS.md` 和 `docs/DEVELOPMENT_GUIDELINES.md`。
 - 提示词属于生产契约，必须定义角色、输入变量、硬约束、输出 Schema 和解析兜底；后端必须校验模型返回值，不能直接信任大模型 JSON。
 - OpenAI 兼容聊天 / 分析调用统一走 `render_engine/llm_client.py`；新增 DeepSeek、OpenAI、Qwen 等同类 Provider 时，只扩展 Provider 预设、能力过滤和公共客户端差异参数。
+- `app/routes/agents.py` 负责智能体首页、脚本分镜、短剧故事版（配置、分镜解析、资产管理、视频生成、后处理、工程持久化）以及脚本文件上传和异步任务入口。
