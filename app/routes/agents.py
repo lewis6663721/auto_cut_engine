@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import zipfile
 from datetime import date, datetime
 from html import unescape
@@ -35,6 +36,17 @@ from render_engine.ai_providers import user_provider_catalog
 
 
 router = APIRouter()
+
+
+async def _drama_storyboard_guard(label: str, handler):
+    try:
+        if inspect.isawaitable(handler):
+            return await handler
+        return handler
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"{label}失败：{exc}") from exc
 
 
 @router.get("/agents", response_class=HTMLResponse)
@@ -136,35 +148,35 @@ async def run_script_storyboard(
 async def api_drama_storyboard(request: Request):
     user = await require_user(request)
     data = await request.json()
-    return await build_drama_storyboard_plan(user, data)
+    return await _drama_storyboard_guard("短剧故事版生成", build_drama_storyboard_plan(user, data))
 
 
 @router.post("/api/agents/drama-storyboard/storyboard")
 async def api_drama_storyboard_storyboard(request: Request):
     user = await require_user(request)
     data = await request.json()
-    return await build_drama_storyboard_plan(user, data)
+    return await _drama_storyboard_guard("短剧故事版分镜", build_drama_storyboard_plan(user, data))
 
 
 @router.post("/api/agents/drama-storyboard/assets")
 async def api_drama_storyboard_assets(request: Request):
     await require_user(request)
     data = await request.json()
-    return build_drama_assets_from_storyboard(data)
+    return await _drama_storyboard_guard("短剧故事版资产解析", build_drama_assets_from_storyboard(data))
 
 
 @router.post("/api/agents/drama-storyboard/videos")
 async def api_drama_storyboard_videos(request: Request):
     await require_user(request)
     data = await request.json()
-    return build_drama_videos_from_storyboard(data)
+    return await _drama_storyboard_guard("短剧故事版视频规划", build_drama_videos_from_storyboard(data))
 
 
 @router.post("/api/agents/drama-storyboard/postprocess")
 async def api_drama_storyboard_postprocess(request: Request):
     await require_user(request)
     data = await request.json()
-    return build_drama_postprocess_from_plan(data)
+    return await _drama_storyboard_guard("短剧故事版后处理规划", build_drama_postprocess_from_plan(data))
 
 
 @router.get("/api/agents/drama-storyboard/projects")

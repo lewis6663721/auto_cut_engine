@@ -14,6 +14,7 @@ from render_engine.media_preview import ensure_asset_preview
 
 AI_TOOL_KEYS = {
     "video_transcription",
+    "auto_subtitle_burn",
     "text_image_generation",
     "text_video_generation",
     "reference_video_generation",

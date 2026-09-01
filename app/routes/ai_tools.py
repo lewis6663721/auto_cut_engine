@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.core.web import render, view_context
 from app.services.tool_tasks import create_tool_task, save_tool_upload
@@ -16,13 +19,27 @@ from render_engine.toolkit import (
     ai_tools as toolkit_ai_tools,
     chat_provider_catalog,
     image_provider_catalog,
+    parse_cues,
     provider_defaults,
+    render_subtitle_preview_png,
     tts_provider_catalog,
     video_provider_catalog,
 )
 
 
 router = APIRouter()
+
+
+async def _save_preview_upload(upload: UploadFile) -> Path:
+    suffix = Path(upload.filename or "").suffix or ".mp4"
+    tmp = tempfile.NamedTemporaryFile(prefix="ace_preview_upload_", suffix=suffix, delete=False)
+    try:
+        with tmp:
+            shutil.copyfileobj(upload.file, tmp)
+        return Path(tmp.name)
+    except Exception:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
 
 
 def build_chat_completion_messages(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -167,6 +184,124 @@ async def ai_tools_video_transcription_page(request: Request):
         "ai_tool_video_transcription.html",
         **await view_context(request, providers=await user_provider_catalog(user, "asr")),
     )
+
+
+@router.get("/ai-tools/auto-subtitle-burn", response_class=HTMLResponse)
+async def ai_tools_auto_subtitle_burn_page(request: Request):
+    user = await require_user(request)
+    return render(
+        request,
+        "ai_tool_auto_subtitle_burn.html",
+        **await view_context(request, providers=await user_provider_catalog(user, "asr")),
+    )
+
+
+@router.post("/ai-tools/auto-subtitle-burn")
+async def ai_tools_auto_subtitle_burn(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    video: UploadFile = File(...),
+    provider: str = Form("env:aifox"),
+    base_url: str = Form(""),
+    model: str = Form(""),
+    font_name: str = Form("Alibaba PuHuiTi 2 55 Regular"),
+    font_size: int = Form(42),
+    font_color: str = Form("#ffffff"),
+    safe_x_percent: float = Form(10),
+    vertical_position_percent: float | None = Form(None),
+    bottom_margin: int | None = Form(None),
+    outline: int = Form(3),
+    shadow: int = Form(1),
+    line_height: float = Form(1.15),
+    line_limit: int = Form(1),
+    alignment: str = Form("bottom-center"),
+    background: str = Form("soft"),
+):
+    user = await require_user(request)
+    path, asset = await save_tool_upload(video, "auto_subtitle_burn")
+    providers = await user_provider_catalog(user, "asr")
+    selected_provider = next((item for item in providers if item["id"] == provider), None)
+    default_base_url = selected_provider["base_url"] if selected_provider else provider_defaults(provider)["base_url"]
+    default_model = selected_provider["model"] if selected_provider else provider_defaults(provider)["model"]
+    style_config = {
+        "font_name": font_name,
+        "font_size": font_size,
+        "font_color": font_color,
+        "safe_x_percent": safe_x_percent,
+        "vertical_position_percent": vertical_position_percent if vertical_position_percent is not None else None,
+        "bottom_margin": bottom_margin if vertical_position_percent is None else None,
+        "outline": outline,
+        "shadow": shadow,
+        "line_height": line_height,
+        "line_limit": line_limit,
+        "alignment": alignment,
+        "background": background,
+    }
+    task = await create_tool_task(
+        request,
+        background_tasks,
+        tool_key="auto_subtitle_burn",
+        tool_name="自动字幕烧录",
+        source_asset=asset,
+        source_paths=[path],
+        applied_config={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or default_base_url).strip(),
+            "model": (model or default_model).strip(),
+            "subtitle_style": style_config,
+        },
+        ai_context={
+            "provider": provider,
+            "provider_selection": provider,
+            "base_url": (base_url or default_base_url).strip(),
+            "model": (model or default_model).strip(),
+            "subtitle_line_limit": line_limit,
+            **style_config,
+        },
+    )
+    return RedirectResponse(f"/task/{task.id}", status_code=303)
+
+
+@router.post("/ai-tools/auto-subtitle-burn/preview")
+async def ai_tools_auto_subtitle_burn_preview(
+    request: Request,
+    video: UploadFile = File(...),
+    preview_text: str = Form("你好"),
+    font_name: str = Form("Alibaba PuHuiTi 2 55 Regular"),
+    font_size: int = Form(42),
+    font_color: str = Form("#ffffff"),
+    safe_x_percent: float = Form(10),
+    vertical_position_percent: float | None = Form(None),
+    bottom_margin: int | None = Form(None),
+    outline: int = Form(3),
+    shadow: int = Form(1),
+    line_height: float = Form(1.15),
+    line_limit: int = Form(1),
+    alignment: str = Form("bottom-center"),
+    background: str = Form("soft"),
+):
+    await require_user(request)
+    source_path = await _save_preview_upload(video)
+    try:
+        context = {
+            "font_name": font_name,
+            "font_size": font_size,
+            "font_color": font_color,
+            "safe_x_percent": safe_x_percent,
+            "vertical_position_percent": vertical_position_percent if vertical_position_percent is not None else None,
+            "bottom_margin": bottom_margin if vertical_position_percent is None else None,
+            "outline": outline,
+            "shadow": shadow,
+            "line_height": line_height,
+            "line_limit": line_limit,
+            "alignment": alignment,
+            "background": background,
+        }
+        png = await asyncio.to_thread(render_subtitle_preview_png, source_path, preview_text, context)
+    finally:
+        source_path.unlink(missing_ok=True)
+    return Response(content=png, media_type="image/png")
 
 
 @router.post("/ai-tools/video-transcription")

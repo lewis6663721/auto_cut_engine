@@ -1,0 +1,376 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <div class="mb-8 flex flex-wrap items-end justify-between gap-5">
+    <div>
+      <a href="/ai-tools" class="text-sm font-black text-slate-600 transition hover:text-slate-300">← 返回 AI 工具包</a>
+      <h1 class="page-title mt-3 font-black text-white">自动字幕烧录</h1>
+      <p class="mt-4 max-w-3xl text-base font-semibold leading-7 text-slate-500">上传有声视频，先自动转录字幕，再按当前样式直接烧录成成品视频。</p>
+    </div>
+    <a href="/tasks" class="muted-button rounded-xl px-5 py-3 text-sm font-black">任务中心</a>
+  </div>
+
+  {% if providers %}
+    <form class="tool-workbench" action="/ai-tools/auto-subtitle-burn" method="post" enctype="multipart/form-data">
+      <section class="tool-config-panel">
+        <div class="tool-section">
+          <h2>素材</h2>
+          <label class="tool-field">有声视频
+            <input id="autoBurnVideoInput" name="video" type="file" accept="video/*" required>
+          </label>
+          <label class="tool-field">ASR Provider
+            <select id="autoBurnProviderSelect" name="provider">
+              {% for provider in providers %}
+                <option value="{{ provider.id }}" data-base-url="{{ provider.base_url }}" data-model="{{ provider.model }}" data-model-options='{{ provider.model_options | tojson }}' data-configured="{{ provider.configured }}">
+                  {{ provider.label }}{% if provider.source == "user" %} · 用户中心{% elif provider.source == "env" %} · 环境变量{% else %} · 本地{% endif %}{% if provider.configured == "true" %} · 已配置{% else %} · 未配置{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">Base URL
+              <input id="autoBurnBaseUrlInput" name="base_url" value="{{ providers[0].base_url if providers else '' }}">
+            </label>
+            <label class="tool-field">本次调用模型
+              <select id="autoBurnModelSelect" name="model"></select>
+            </label>
+          </div>
+          <div class="tool-summary-strip">
+            <article class="tool-summary-card">
+              <span>当前 Provider</span>
+              <strong id="autoBurnProviderName">-</strong>
+            </article>
+            <article class="tool-summary-card">
+              <span>本次模型</span>
+              <strong id="autoBurnModelName">-</strong>
+            </article>
+            <article class="tool-summary-card">
+              <span>预览文案</span>
+              <strong id="autoBurnPreviewEcho">你好</strong>
+            </article>
+          </div>
+          <div class="tool-hint">系统会先生成字幕稿，再按右侧样式自动烧录。任务详情页可下载 srt / txt / json。</div>
+        </div>
+
+        <div class="tool-section">
+          <h2>样式</h2>
+          <label class="tool-field">预览文本
+            <input id="autoBurnPreviewTextInput" name="preview_text" type="text" value="你好" placeholder="输入要预览的字幕文案">
+          </label>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">字体
+              <select id="autoBurnFont" name="font_name">
+                <optgroup label="阿里巴巴普惠体">
+                  <option value="Alibaba PuHuiTi 2 55 Regular">阿里巴巴普惠体 Regular</option>
+                  <option value="Alibaba PuHuiTi 2 65 Medium">阿里巴巴普惠体 Medium</option>
+                  <option value="Alibaba PuHuiTi 2 75 SemiBold">阿里巴巴普惠体 SemiBold</option>
+                  <option value="Alibaba PuHuiTi 2 85 Bold">阿里巴巴普惠体 Bold</option>
+                  <option value="Alibaba PuHuiTi 2 95 ExtraBold">阿里巴巴普惠体 ExtraBold</option>
+                  <option value="Alibaba PuHuiTi 2 105 Heavy">阿里巴巴普惠体 Heavy</option>
+                  <option value="Alibaba PuHuiTi 2 115 Black">阿里巴巴普惠体 Black</option>
+                  <option value="Alibaba PuHuiTi 2 45 Light">阿里巴巴普惠体 Light</option>
+                  <option value="Alibaba PuHuiTi 2 35 Thin">阿里巴巴普惠体 Thin</option>
+                </optgroup>
+                <optgroup label="系统字体">
+                  <option value="PingFang SC">苹方</option>
+                  <option value="Microsoft YaHei">微软雅黑</option>
+                  <option value="Arial">Arial</option>
+                  <option value="Noto Sans CJK SC">Noto Sans</option>
+                  <option value="Source Han Sans SC">思源黑体</option>
+                </optgroup>
+              </select>
+            </label>
+            <label class="tool-field">对齐
+              <select id="autoBurnAlign" name="alignment">
+                <option value="bottom-center">底部居中</option>
+                <option value="bottom-left">底部居左</option>
+                <option value="bottom-right">底部居右</option>
+                <option value="top-center">顶部居中</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="tool-field">字体颜色
+              <input id="autoBurnColor" name="font_color" type="color" value="#ffffff">
+            </label>
+            <label class="tool-field">背景
+              <select id="autoBurnBackground" name="background">
+                <option value="none">无背景</option>
+                <option value="soft">半透明底</option>
+                <option value="solid">深色底</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="tool-slider-grid">
+            {% for id, name, field, value, min, max, step, unit in [
+              ("autoBurnLineLimit", "行数限制", "line_limit", 1, 1, 3, 1, "行"),
+              ("autoBurnFontSize", "字体大小", "font_size", 42, 16, 240, 1, "px"),
+              ("autoBurnSafeX", "水平安全距离", "safe_x_percent", 10, 0, 50, 1, "%"),
+              ("autoBurnVertical", "垂直位置", "vertical_position_percent", 10, 0, 100, 1, "%"),
+              ("autoBurnStroke", "描边粗细", "outline", 3, 0, 40, 1, ""),
+              ("autoBurnShadow", "阴影强度", "shadow", 1, 0, 40, 1, ""),
+              ("autoBurnLineHeight", "行距倍率", "line_height", 1.15, 0.8, 4.0, 0.05, "")
+            ] %}
+              <label class="tool-slider">
+                <div class="tool-slider-head">
+                  <span>{{ name }}</span>
+                  <strong data-slider-value="{{ id }}">{{ value }}{{ unit }}</strong>
+                </div>
+                <div class="tool-slider-row">
+                  <button type="button" class="tool-slider-step" data-step-target="{{ id }}" data-step="-{{ step }}">-</button>
+                  <input id="{{ id }}" name="{{ field }}" type="range" value="{{ value }}" min="{{ min }}" max="{{ max }}" step="{{ step }}" data-unit="{{ unit }}" data-step-target="{{ id }}">
+                  <button type="button" class="tool-slider-step" data-step-target="{{ id }}" data-step="{{ step }}">+</button>
+                </div>
+              </label>
+            {% endfor %}
+          </div>
+
+          <div class="tool-hint">底部距离现在改成按视频高度占比计算，100% 表示贴近顶部，0% 表示贴近底部；预览和最终烧录会使用同一套参数。</div>
+        </div>
+
+        <button class="gradient-action rounded-xl px-5 py-3 text-sm font-black" type="submit">开始自动烧录</button>
+      </section>
+
+      <section class="subtitle-preview-panel">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-black text-slate-100">样式预览</h2>
+          <p id="autoBurnPreviewInfo" class="mt-1 text-sm font-bold text-slate-600">上传视频后会截取一帧作为底图</p>
+        </div>
+        <div class="rounded-full bg-cyan-950/40 px-4 py-2 text-xs font-black text-cyan-300">自动转录 + 自动烧录</div>
+      </div>
+      <div class="subtitle-preview-meta">
+        <div class="subtitle-preview-mini">
+          <span>文案</span>
+          <strong id="autoBurnPreviewSummary">你好</strong>
+        </div>
+        <div class="subtitle-preview-mini">
+          <span>位置</span>
+          <strong id="autoBurnPositionSummary">底部 10%</strong>
+        </div>
+        <div class="subtitle-preview-mini">
+          <span>样式</span>
+          <strong id="autoBurnStyleSummary">42px · 1行 · 描边 3 · 阴影 1</strong>
+        </div>
+      </div>
+      <div class="subtitle-preview-stage">
+        <canvas id="autoBurnPreviewCanvas"></canvas>
+        <div id="autoBurnPreviewText" class="subtitle-preview-text" hidden></div>
+      </div>
+        <div class="tool-hint mt-4">当前预览只用于显示字幕样式。真正的字幕内容会在任务执行时由 ASR 自动生成。</div>
+        <video id="autoBurnFrameVideo" muted playsinline hidden></video>
+      </section>
+    </form>
+  {% else %}
+    <div class="tool-empty-state">
+      <span class="tool-dock-icon"><i data-lucide="subtitles"></i></span>
+      <strong>还没有可用的 ASR Provider</strong>
+      <p>请先到用户中心配置支持语音转字幕的厂商，然后再使用自动字幕烧录。</p>
+      <a href="/account" class="gradient-action rounded-xl px-5 py-3 text-sm font-black">去用户中心配置</a>
+    </div>
+  {% endif %}
+</section>
+
+<script>
+(() => {
+  const providerSelect = document.getElementById('autoBurnProviderSelect');
+  const baseUrlInput = document.getElementById('autoBurnBaseUrlInput');
+  const modelSelect = document.getElementById('autoBurnModelSelect');
+  const preview = document.getElementById('autoBurnPreviewText');
+  const previewInfo = document.getElementById('autoBurnPreviewInfo');
+  const providerName = document.getElementById('autoBurnProviderName');
+  const modelName = document.getElementById('autoBurnModelName');
+  const previewEcho = document.getElementById('autoBurnPreviewEcho');
+  const previewSummary = document.getElementById('autoBurnPreviewSummary');
+  const positionSummary = document.getElementById('autoBurnPositionSummary');
+  const styleSummary = document.getElementById('autoBurnStyleSummary');
+  const canvas = document.getElementById('autoBurnPreviewCanvas');
+  const frameVideo = document.getElementById('autoBurnFrameVideo');
+  const videoInput = document.getElementById('autoBurnVideoInput');
+  const previewTextInput = document.getElementById('autoBurnPreviewTextInput');
+  const ctx = canvas?.getContext('2d');
+  const controls = ['autoBurnFont', 'autoBurnAlign', 'autoBurnColor', 'autoBurnBackground', 'autoBurnLineLimit', 'autoBurnFontSize', 'autoBurnSafeX', 'autoBurnVertical', 'autoBurnStroke', 'autoBurnShadow', 'autoBurnLineHeight'];
+  preview.hidden = true;
+
+  const fillSelectOptions = (select, values, currentValue) => {
+    if (!select) return;
+    select.textContent = '';
+    const rows = (values || []).filter(Boolean);
+    rows.forEach((value) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      select.appendChild(option);
+    });
+    if (currentValue && rows.includes(currentValue)) {
+      select.value = currentValue;
+    } else if (rows.length) {
+      select.value = rows[0];
+    }
+  };
+
+  const syncProvider = () => {
+    const option = providerSelect?.selectedOptions?.[0];
+    if (!option) return;
+    if (baseUrlInput) baseUrlInput.value = option.dataset.baseUrl || '';
+    fillSelectOptions(modelSelect, JSON.parse(option.dataset.modelOptions || '[]'), option.dataset.model || '');
+    if (providerName) providerName.textContent = option.textContent || '-';
+    if (modelName) modelName.textContent = modelSelect?.value || option.dataset.model || '-';
+    if (previewInfo) {
+      previewInfo.textContent = option.dataset.configured === 'true'
+        ? '当前 Provider 已配置，可直接提交自动字幕烧录任务。'
+        : '当前 Provider 未配置 API Key；若提交，服务端会按现有逻辑回退到本地兜底。';
+    }
+  };
+
+  const drawFrame = () => {
+    if (!ctx || !canvas || !frameVideo) return;
+    const width = frameVideo.videoWidth || 1080;
+    const height = frameVideo.videoHeight || 1920;
+    canvas.width = width;
+    canvas.height = height;
+    ctx.fillStyle = '#05060b';
+    ctx.fillRect(0, 0, width, height);
+    if (frameVideo.videoWidth) {
+      ctx.drawImage(frameVideo, 0, 0, width, height);
+    }
+    updatePreview();
+  };
+
+  const previewEndpoint = '/ai-tools/auto-subtitle-burn/preview';
+  let previewJobId = 0;
+  let previewTimer = null;
+
+  function drawPreviewImage(blob) {
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      canvas.width = image.naturalWidth || 1080;
+      canvas.height = image.naturalHeight || 1920;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+    };
+    image.src = url;
+  }
+
+  async function requestPreview() {
+    const file = videoInput.files?.[0];
+    if (!file) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#05060b';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      previewInfo.textContent = '上传视频后会截取一帧作为底图';
+      return;
+    }
+    const formData = new FormData();
+    formData.append('video', file);
+    formData.append('preview_text', previewTextInput?.value || '你好');
+    controls.forEach((id) => {
+      const input = document.getElementById(id);
+      if (input) formData.append(input.name, input.value);
+    });
+    const currentJob = ++previewJobId;
+    previewInfo.textContent = '正在生成后端预览...';
+    const response = await fetch(previewEndpoint, { method: 'POST', body: formData });
+    if (currentJob !== previewJobId) return;
+    if (!response.ok) {
+      previewInfo.textContent = (await response.text()) || '预览生成失败';
+      return;
+    }
+    drawPreviewImage(await response.blob());
+    previewInfo.textContent = `已选择 ${file.name}，将以当前样式自动烧录字幕。`;
+  }
+
+  function schedulePreview() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => {
+      requestPreview().catch((error) => {
+        previewInfo.textContent = error?.message || '预览生成失败';
+      });
+    }, 180);
+  }
+
+  providerSelect?.addEventListener('change', syncProvider);
+  syncProvider();
+
+  function formatSliderValue(input) {
+    const numeric = Number(input.value || 0);
+    const step = String(input.step || '1');
+    const decimals = step.includes('.') ? step.split('.')[1].length : 0;
+    return `${numeric.toFixed(decimals)}${input.dataset.unit || ''}`;
+  }
+
+  function syncSliderValue(input) {
+    const value = document.querySelector(`[data-slider-value="${input.id}"]`);
+    if (value) value.textContent = formatSliderValue(input);
+    const min = Number(input.min || 0);
+    const max = Number(input.max || 100);
+    const current = Number(input.value || min);
+    const ratio = max > min ? ((current - min) / (max - min)) * 100 : 0;
+    input.style.setProperty('--range-fill', `${Math.max(0, Math.min(100, ratio))}%`);
+  }
+
+  function adjustSlider(targetId, delta) {
+    const input = document.getElementById(targetId);
+    if (!input) return;
+    const min = Number(input.min || 0);
+    const max = Number(input.max || 100);
+    const step = Number(input.step || 1);
+    const current = Number(input.value || min);
+    const next = Math.max(min, Math.min(max, current + (delta || step)));
+    input.value = String(next);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  videoInput?.addEventListener('change', () => {
+    schedulePreview();
+  });
+
+  const syncPreviewText = () => {
+    const text = previewTextInput?.value?.trim() || '你好';
+    if (previewEcho) previewEcho.textContent = text;
+    if (previewSummary) previewSummary.textContent = text;
+    schedulePreview();
+  };
+  previewTextInput?.addEventListener('input', syncPreviewText);
+
+  controls.forEach((id) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    syncSliderValue(input);
+    input.addEventListener('input', () => {
+      syncSliderValue(input);
+      const size = document.getElementById('autoBurnFontSize');
+      const outline = document.getElementById('autoBurnStroke');
+      const shadow = document.getElementById('autoBurnShadow');
+      const vertical = document.getElementById('autoBurnVertical');
+      const lineLimit = document.getElementById('autoBurnLineLimit');
+      if (styleSummary && size && outline && shadow) {
+        styleSummary.textContent = `${size.value}px · ${lineLimit ? `${lineLimit.value}行` : '1行'} · 描边 ${outline.value} · 阴影 ${shadow.value}`;
+      }
+      if (positionSummary && vertical) {
+        positionSummary.textContent = `底部 ${Number(vertical.value).toFixed(0)}%`;
+      }
+      schedulePreview();
+    });
+  });
+
+  document.querySelectorAll('[data-step-target]').forEach((button) => {
+    button.addEventListener('click', () => {
+      adjustSlider(button.dataset.stepTarget, Number(button.dataset.step || 0));
+    });
+  });
+
+  function updateModelSummary() {
+    if (modelName) modelName.textContent = modelSelect?.value || '-';
+  }
+  modelSelect?.addEventListener('change', updateModelSummary);
+
+  schedulePreview();
+  syncPreviewText();
+  updateModelSummary();
+})();
+</script>
+{% endblock %}

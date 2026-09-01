@@ -21,6 +21,7 @@ from render_engine.toolkit import (
     native_image_generation_endpoint,
     reference_video_generation_parameters,
     asr_source_label,
+    find_fun_asr_split_points,
     synthesize_segments_from_text,
     tts_provider_catalog,
     video_generation_parameters,
@@ -316,6 +317,20 @@ def test_asr_source_label_distinguishes_remote_and_fallback():
     assert asr_source_label({"fallback_used": False}, "qwen", "fun-asr-flash-2026-06-15") == "Fun-ASR 大模型"
     assert asr_source_label({"fallback_used": False}, "qwen", "qwen3-asr-flash") == "Qwen3-ASR 大模型"
     assert asr_source_label({"fallback_used": True}, "qwen", "fun-asr-flash-2026-06-15") == "本地兜底字幕"
+
+
+def test_fun_asr_split_points_prefer_word_boundaries():
+    words = [
+        {"text": "大家", "start": 0.0, "end": 0.7, "sentence_id": 0},
+        {"text": "好", "start": 0.7, "end": 1.0, "sentence_id": 0},
+        {"text": "我们", "start": 11.7, "end": 12.2, "sentence_id": 0},
+        {"text": "开始", "start": 12.2, "end": 12.7, "sentence_id": 0},
+        {"text": "测试", "start": 23.6, "end": 24.0, "sentence_id": 0},
+    ]
+    points = find_fun_asr_split_points(words, 24.0)
+    assert points[0] == 0.0
+    assert points[-1] == 24.0
+    assert any(11.0 <= point <= 13.5 for point in points[1:-1])
 
 
 @pytest.mark.asyncio

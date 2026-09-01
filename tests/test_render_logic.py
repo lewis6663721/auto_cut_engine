@@ -7,6 +7,9 @@ from render_engine.toolkit import (
     active_subtitle_text,
     build_semantic_subtitle_segments,
     dynamic_subtitle_max_chars,
+    _resolve_vertical_position_percent,
+    remove_filler_words,
+    offset_transcript,
     normalize_subtitle_overlaps,
     parse_cues,
     segments_to_srt,
@@ -107,6 +110,39 @@ def test_semantic_subtitle_splitter_keeps_entries_within_single_line_limit():
     assert "".join(entry["text"] for entry in entries) == "大家好欢迎来到英雄联盟今天我们开始第一局比赛"
 
 
+def test_semantic_subtitle_splitter_enforces_single_line_mode():
+    words = [
+        {"text": text, "start": index * 0.3, "end": index * 0.3 + 0.25, "sentence_id": 0}
+        for index, text in enumerate(["我们", "现在", "测试", "单行", "字幕", "语义", "完整性"])
+    ]
+    srt = segments_to_srt([], words=words, max_chars=6, max_lines=1)
+    assert all("\n" not in line for line in srt_subtitle_text_lines(srt))
+
+
+def test_remove_filler_words_drops_noise_and_keeps_trailing_punctuation():
+    words = [
+        {"text": "嗯", "start": 0.0, "end": 0.1, "sentence_id": 0},
+        {"text": "我们", "start": 0.1, "end": 0.3, "sentence_id": 0},
+        {"text": "开始吧。", "start": 0.3, "end": 0.6, "sentence_id": 0},
+    ]
+    kept = remove_filler_words(words)
+    assert [item["text"] for item in kept] == ["我们", "开始吧。"]
+
+
+def test_semantic_subtitle_splitter_respects_punctuation_boundaries():
+    words = [
+        {"text": "我们", "start": 0.0, "end": 0.2, "sentence_id": 0},
+        {"text": "先", "start": 0.2, "end": 0.4, "sentence_id": 0},
+        {"text": "测试，", "start": 0.4, "end": 0.6, "sentence_id": 0},
+        {"text": "然后", "start": 0.6, "end": 0.8, "sentence_id": 0},
+        {"text": "继续", "start": 0.8, "end": 1.0, "sentence_id": 0},
+    ]
+    entries = build_semantic_subtitle_segments([], words=words, config=SubtitleSplitConfig(max_chars=10, min_time=0.5))
+    assert len(entries) >= 2
+    assert entries[0]["text"].endswith("测试")
+    assert entries[1]["text"].startswith("然后")
+
+
 def test_semantic_subtitle_splitter_repairs_negative_boundary():
     words = [
         {"text": "这个", "start": 0.0, "end": 0.2, "sentence_id": 0},
@@ -158,10 +194,28 @@ def test_semantic_subtitle_splitter_falls_back_from_sentence_segments():
     assert all(len(entry["text"]) <= 8 for entry in entries)
 
 
+def test_offset_transcript_shifts_times_and_sentence_ids():
+    transcript = {
+        "segments": [{"start": 0.0, "end": 1.0, "text": "你好"}],
+        "words": [{"text": "你好", "start": 0.0, "end": 1.0, "sentence_id": 0}],
+    }
+    shifted = offset_transcript(transcript, offset=12.5, sentence_offset=3)
+    assert shifted["segments"][0]["start"] == 12.5
+    assert shifted["segments"][0]["end"] == 13.5
+    assert shifted["words"][0]["start"] == 12.5
+    assert shifted["words"][0]["sentence_id"] == 3
+
+
 def test_dynamic_subtitle_max_chars_uses_safe_bounds(tmp_path):
     missing_video = tmp_path / "missing.mp4"
     value = dynamic_subtitle_max_chars(missing_video, font_name="Missing Font", font_size=42, safe_area_percent=15)
     assert 12 <= value <= 32
+
+
+def test_vertical_position_percent_prefers_new_field_and_converts_old_px():
+    assert _resolve_vertical_position_percent({"vertical_position_percent": 80}, 1080) == 80
+    converted = _resolve_vertical_position_percent({"bottom_margin": 108}, 1080)
+    assert 9.5 <= converted <= 10.5
 
 
 def srt_subtitle_text_lines(srt_text: str) -> list[str]:

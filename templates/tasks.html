@@ -33,7 +33,7 @@
               <span class="rounded-full bg-cyan-950/40 px-3 py-1 text-xs font-black text-cyan-300">{{ task.ai_context.get("tool_name") }}</span>
             {% endif %}
             {% set tool_extra = (task.ai_context or {}).get("tool_result_extra", {}) %}
-            {% if (task.ai_context or {}).get("tool_key") == "video_transcription" %}
+            {% if (task.ai_context or {}).get("tool_key") in ["video_transcription", "auto_subtitle_burn"] or tool_extra.get("asr_source_label") %}
               {% set asr_model = tool_extra.get("model") or (task.ai_context or {}).get("model") or "" %}
               {% set asr_label = tool_extra.get("asr_source_label") %}
               {% if not asr_label %}

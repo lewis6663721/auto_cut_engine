@@ -28,7 +28,7 @@ AutoCut Engine 是一个企业级智能视频剪辑平台，采用前后端不�
 | 🤖 AI 智能匹配 | 上传视频 → Qwen-VL 分析 → 自动推荐模板+配置+场景分割 |
 | 🎨 创意坊 | 专家经验采集平台——描述剪辑方法+上传视频，AI 自动分析结构化存储 |
 | 🧩 Remotion 模板工厂 | 上传参考图 / 口头描述 → 生成代码化视频模板草稿、转场和特效资产 |
-| 🧠 AI 工具包 | 多厂商模型统一接入，支持 AI 对话、视频转字幕、文生图、文生视频、参考生视频 |
+| 🧠 AI 工具包 | 多厂商模型统一接入，支持 AI 对话、视频转字幕、自动字幕烧录、文生图、文生视频、参考生视频 |
 | 🎡 娱乐广场 | 游客可用的小工具广场，首期支持自带 API Key 的名字打分 |
 | 📋 剪辑详情 | 渲染完成后自动生成可解释的剪辑操作表格（时间点/类型/原因/来源） |
 | ⚙️ 维度注册表 | DB 持久化的维度定义系统，管理后台可编辑参数 schema |
@@ -199,6 +199,7 @@ celery -A tasks worker -Q celery,render --loglevel=info
 - **AI 对话助手**：放在 AI 工具包独立子页面，并为登录用户提供全站右下角悬浮快捷对话窗。对话走 OpenAI 兼容 `chat/completions` 协议；默认可选 Qwen / 百炼 `qwen3.7-plus`、DeepSeek `deepseek-v4-flash`、OpenAI / GPT 等聊天模型，完整页也可选择 `qwen-vl-plus` 并随消息上传图片或填写图片 URL，后端按 `image_url` 内容格式提交。
 - **路由分层**：AI 工具包页面和 API 已迁入 `app/routes/ai_tools.py`；工具任务创建与上传素材入库统一走 `app/services/tool_tasks.py`，后续新增 AI 小工具应复用该入口，避免在 `main.py` 继续堆路由。
 - **Fun-ASR 视频转字幕**：视频转字幕优先使用百炼 `fun-asr-flash-2026-06-15` 原生多模态接口，读取模型返回的句级 / 词级时间戳生成 SRT；页面支持填写上下文和热词来提升行业词、人名、游戏词识别。`qwen3-asr-flash` 仍可作为备选，走 OpenAI 兼容 `chat/completions` + `input_audio`；长音频超出内联音频建议大小或远程失败时自动切换本地 ASR。任务详情和任务中心会显示 `Fun-ASR 大模型`、`Qwen3-ASR 大模型` 或 `本地兜底字幕` 标签，方便确认实际执行路径。
+- **自动字幕烧录**：AI 工具包新增一键式字幕烧录入口，用户上传有声视频后先转录再按页面样式自动烧录。任务结果同时保留生成的 srt / txt / json 和烧录后视频，便于回溯与二次编辑。
 - **字幕语义拆分**：ASR SRT 生成采用纯硬代码规则引擎，不依赖 LLM。优先使用词级时间戳，按标点天然边界、`sentence_id`、`punct_id` 保护语义段，再用 `jieba` 词性和规则修复否定词、介宾、动宾、数量词、动补、“的”字结构、复合词等边界；每条严格单行，字数会根据视频宽度、字号和安全区动态估算，极端长句会递归硬拆保证不溢屏。只有句级时间戳时会按文本比例生成词级时间，作为降级路径。
 - **模型下拉**：用户中心已为聊天 / ASR / 图片 / 视频生成提供候选模型下拉，支持常用模型直选和自定义手填。视频候选包含 HappyHorse 文生视频 `happyhorse-1.1-t2v`、参考生视频 `happyhorse-1.1-r2v`、视频编辑 `happyhorse-1.0-video-edit`，以及 Wan `wan2.7-t2v` 等模型。
 - **文生图工具**：Provider 下拉只显示具备图片生成能力且有图片模型的厂商；阿里系图片模型按百炼文档提交 `parameters`，支持反向提示词、智能改写、水印、随机种子、尺寸和一次生成多张，任务完成后在任务详情页直接预览和下载第一张图片，完整图片列表写入任务结果 JSON。
@@ -291,6 +292,8 @@ celery -A tasks worker -Q celery,render --loglevel=info
 | POST | `/api/ai-tools/chat` | 调用大模型对话 |
 | GET | `/ai-tools/video-transcription` | 视频转字幕工具页 |
 | POST | `/ai-tools/video-transcription` | 视频转字幕 |
+| GET | `/ai-tools/auto-subtitle-burn` | 自动字幕烧录工具页 |
+| POST | `/ai-tools/auto-subtitle-burn` | 自动字幕烧录 |
 | GET | `/ai-tools/text-image` | 文生图工具页 |
 | POST | `/ai-tools/text-image` | 提交文生图任务 |
 | GET | `/ai-tools/text-video` | 文生视频工具页 |

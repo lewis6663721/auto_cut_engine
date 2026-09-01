@@ -186,7 +186,7 @@
       </div>
       <div class="agent-result-head drama-log-head">
         <div>
-          <strong>实时进度</strong>
+          <strong>实时日志</strong>
           <span>显示当前执行到哪一步，以及每个任务的返回状态</span>
         </div>
       </div>
@@ -644,15 +644,31 @@ const postJson = async (url, body) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || data.message || '请求失败');
+  const rawText = await response.text();
+  let data = {};
+  if (rawText) {
+    try {
+      data = JSON.parse(rawText);
+    } catch (error) {
+      data = { _raw: rawText };
+    }
+  }
+  if (!response.ok) throw new Error(data.detail || data.message || data._raw || `请求失败 (${response.status})`);
   return data;
 };
 
 const fetchJson = async (url) => {
   const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || data.message || '请求失败');
+  const rawText = await response.text();
+  let data = {};
+  if (rawText) {
+    try {
+      data = JSON.parse(rawText);
+    } catch (error) {
+      data = { _raw: rawText };
+    }
+  }
+  if (!response.ok) throw new Error(data.detail || data.message || data._raw || `请求失败 (${response.status})`);
   return data;
 };
 

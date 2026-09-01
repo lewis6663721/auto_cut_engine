@@ -59,7 +59,32 @@ COMPOUND_WORDS = {
     "参考生视频",
     "剪辑台",
 }
+ADVERBIAL_WORDS = {
+    "正在",
+    "已经",
+    "刚刚",
+    "刚",
+    "再",
+    "又",
+    "还",
+    "也",
+    "都",
+    "只",
+    "就",
+    "一直",
+    "仍然",
+    "持续",
+    "先",
+    "先行",
+    "马上",
+    "立刻",
+    "正在",
+}
 NUMBER_UNIT_RE = re.compile(r"^[\d零一二三四五六七八九十百千万亿两]+(?:\.\d+)?[%％]?$")
+FUN_ASR_LONG_AUDIO_THRESHOLD_SECONDS = 15.0
+FUN_ASR_TARGET_CHUNK_SECONDS = 12.0
+FUN_ASR_SPLIT_WINDOW_SECONDS = 3.0
+FUN_ASR_MIN_CHUNK_SECONDS = 4.0
 HAPPYHORSE_REFERENCE_VIDEO_MODELS = {"happyhorse-1.1-r2v", "happyhorse-1.0-r2v"}
 REFERENCE_VIDEO_RATIOS = {"16:9", "9:16", "3:4", "4:3", "4:5", "5:4", "1:1", "9:21", "21:9"}
 REFERENCE_VIDEO_RESOLUTIONS = {"720P", "1080P"}
@@ -116,6 +141,13 @@ def ai_tools() -> list[dict[str, Any]]:
             "label": "视频转字幕",
             "icon": "captions",
             "description": "上传视频，自动转录为字幕稿，支持接入 qwen / gpt / sedance 兼容接口。",
+        },
+        {
+            "key": "auto_subtitle_burn",
+            "group": "asr",
+            "label": "自动字幕烧录",
+            "icon": "subtitles",
+            "description": "上传有声视频，先转录字幕再按当前样式自动烧录成成品。",
         },
         {
             "key": "text_image_generation",
@@ -271,6 +303,8 @@ async def run_tool_task(task_id: int) -> RenderTask:
             result = await extract_audio_task(task)
         elif tool_key == "video_transcription":
             result = await video_transcription_task(task)
+        elif tool_key == "auto_subtitle_burn":
+            result = await auto_subtitle_burn_task(task)
         elif tool_key == "text_image_generation":
             result = await generation_task_with_retry(task, "图片生成", text_image_generation_task)
         elif tool_key == "text_video_generation":
@@ -331,30 +365,156 @@ async def generation_task_with_retry(task: RenderTask, label: str, runner: Any) 
     raise RuntimeError(f"{label}重试失败")
 
 
-async def burn_subtitles_task(task: RenderTask) -> ToolResult:
-    context = dict(task.ai_context or {})
-    source_asset = task.source_asset
-    if not source_asset:
-        raise ValueError("缺少源视频")
-    source_path = Path(source_asset.file_path)
-    if not source_path.exists():
-        raise ValueError("源视频不存在")
-    subtitle_text = str(context.get("subtitle_text") or context.get("input_text") or "").strip()
-    if not subtitle_text:
-        raise ValueError("缺少字幕内容")
-    await _update_task(task, 18, "1/3 正在整理字幕内容")
+async def build_video_subtitle_assets(task: RenderTask, context: dict[str, Any], source_path: Path) -> dict[str, Any]:
+    provider_selection = str(context.get("provider") or context.get("provider_selection") or "env:aifox")
+    provider = await resolve_provider_config(
+        provider_selection,
+        user_id=task.user_id,
+        capability="asr",
+        base_url=str(context.get("base_url") or ""),
+        model=str(context.get("model") or ""),
+    )
+    provider_key = str(provider["provider_key"])
+    model = str(provider["model"])
+    base_url = str(provider["base_url"])
+    api_key = str(context.get("api_key") or provider["api_key"] or "")
+    endpoint = str(provider.get("endpoint") or "/v1/audio/transcriptions")
+    source_duration = probe_duration(source_path) or 0.0
+    await _update_task(task, 15, "1/5 正在提取音频轨道")
+    with tempfile.TemporaryDirectory(prefix="ace_asr_") as temp_dir:
+        temp_path = Path(temp_dir)
+        audio_path = temp_path / "source.wav"
+        ok = await run_ffmpeg_command([
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(audio_path),
+        ])
+        if not ok or not audio_path.exists():
+            raise RuntimeError("音频提取失败")
+        await _update_task(task, 35, "2/5 正在调用字幕转录模型")
+        transcript: dict[str, Any]
+        try:
+            if provider_key == "local_asr":
+                raise RuntimeError("用户选择本地 ASR")
+            transcript = await call_asr_provider(
+                audio_path,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                provider_key=provider_key,
+                endpoint=endpoint,
+                asr_context=str(context.get("asr_context") or ""),
+                hotwords=str(context.get("hotwords") or ""),
+            )
+            transcript["fallback_used"] = False
+            if is_fun_asr_model(model) and source_duration > FUN_ASR_LONG_AUDIO_THRESHOLD_SECONDS:
+                await _update_task(task, 48, "2/5 Fun-ASR 长音频正在按词边界分段重识别")
+                transcript = await retranscribe_fun_asr_long_audio(
+                    audio_path,
+                    seed_transcript=transcript,
+                    base_url=base_url,
+                    api_key=api_key,
+                    model=model,
+                    provider_key=provider_key,
+                    endpoint=endpoint,
+                    asr_context=str(context.get("asr_context") or ""),
+                    hotwords=str(context.get("hotwords") or ""),
+                    duration=source_duration or probe_duration(audio_path) or 0.0,
+                    task=task,
+                )
+        except Exception as exc:
+            fallback_stage = "3/5 正在使用本地 ASR 兜底" if provider_key == "local_asr" else "3/5 远程 ASR 不可用，正在切换本地兜底"
+            await _update_task(task, 58, fallback_stage)
+            transcript = await local_asr_transcribe(audio_path, source_path, reason=str(exc)[:500], task=task)
+        if not transcript.get("fallback_used"):
+            await _update_task(task, 72, "3/5 模型已返回，正在整理结果")
+        segments = transcript.get("segments") or []
+        txt_text = transcript.get("text") or transcript.get("transcript") or "\n".join(
+            segment.get("text", "") for segment in segments
+        )
+        if not segments and txt_text:
+            duration = probe_duration(source_path) or probe_duration(audio_path) or 0.0
+            segments = synthesize_segments_from_text(str(txt_text), duration)
+            transcript["segments"] = segments
+            transcript["timestamp_mode"] = "synthetic"
+        if not segments:
+            duration = probe_duration(source_path) or 0.0
+            segments = fallback_segments(duration, label="本地兜底字幕段")
+            transcript["segments"] = segments
+        await _update_task(task, 85, "5/5 正在整理字幕文件")
+        subtitle_words = transcript.get("words") if isinstance(transcript.get("words"), list) else None
+        subtitle_max_chars = dynamic_subtitle_max_chars(
+            source_path,
+            font_name=str(context.get("font_name") or "Alibaba PuHuiTi 2 55 Regular"),
+            font_size=int(context.get("font_size") or 42),
+            safe_area_percent=float(context.get("safe_x_percent") or context.get("safe_area_percent") or 15),
+        )
+        subtitle_line_limit = max(1, min(3, int(context.get("subtitle_line_limit") or context.get("line_limit") or 1)))
+        srt_text = segments_to_srt(segments, words=subtitle_words, max_chars=subtitle_max_chars, max_lines=subtitle_line_limit)
+        return {
+            "provider_key": provider_key,
+            "model": model,
+            "base_url": base_url,
+            "api_key": api_key,
+            "endpoint": endpoint,
+            "transcript": transcript,
+            "segments": segments,
+            "subtitle_words": subtitle_words,
+            "subtitle_max_chars": subtitle_max_chars,
+            "subtitle_line_limit": subtitle_line_limit,
+            "txt_text": str(txt_text).strip(),
+            "srt_text": srt_text,
+            "fallback_used": transcript.get("fallback_used", False),
+            "fallback_reason": transcript.get("fallback_reason", ""),
+            "timestamp_mode": transcript.get("timestamp_mode", ""),
+            "subtitle_splitter": str(transcript.get("subtitle_splitter") or ("jieba-rules-word-timestamp" if subtitle_words else "jieba-rules-segment-fallback")),
+            "long_audio_split": transcript.get("long_audio_split", {}),
+            "asr_source": "fallback" if transcript.get("fallback_used") else "remote",
+            "asr_source_label": asr_source_label(transcript, provider_key, model),
+        }
+
+
+async def burn_subtitle_video(
+    task: RenderTask,
+    source_path: Path,
+    subtitle_text: str,
+    context: dict[str, Any],
+    *,
+    output_prefix: str,
+    progress_plan: tuple[tuple[int, str], ...],
+) -> dict[str, Any]:
     raw_cues = parse_cues(subtitle_text, fallback_duration=max(2.0, probe_duration(source_path) or 12.0))
-    cues = normalize_subtitle_overlaps(raw_cues)
+    render_engine = "ffmpeg-subtitles"
+    context = dict(context or {})
+    style = subtitle_style_from_context(context, source_path)
+    cues = reflow_subtitle_cues_for_line_limit(raw_cues, source_path, style)
     srt_text = cues_to_srt(cues)
+    custom_layout = (
+        abs(float(style.get("line_height") or 1.15) - 1.15) > 0.001
+        or abs(float(style.get("vertical_position_percent") or 10) - 10) > 0.001
+        or int(style.get("line_limit") or 1) != 1
+    )
     with tempfile.TemporaryDirectory(prefix="ace_burn_") as temp_dir:
         temp_path = Path(temp_dir)
         subtitle_file = temp_path / "subtitle.srt"
         subtitle_file.write_text(srt_text, encoding="utf-8")
-        output = settings.media_path / "results" / f"subtitle_burn_{task.id}_{source_path.stem}.mp4"
-        style = subtitle_style_from_context(context, source_path)
-        await _update_task(task, 45, "2/3 正在烧录字幕")
+        output = settings.media_path / "results" / f"{output_prefix}_{task.id}_{source_path.stem}.mp4"
+        if progress_plan:
+            await _update_task(task, progress_plan[0][0], progress_plan[0][1])
         ok = False
-        if ffmpeg_supports_filter("subtitles"):
+        if custom_layout:
+            render_engine = "pillow-layout"
+            ok = await asyncio.to_thread(burn_subtitles_with_pillow, source_path, output, cues, style)
+        elif ffmpeg_supports_filter("subtitles"):
             command = [
                 "ffmpeg",
                 "-y",
@@ -383,21 +543,99 @@ async def burn_subtitles_task(task: RenderTask) -> ToolResult:
                 ]
                 ok = await run_ffmpeg_command(command)
         if not ok:
-            await _update_task(task, 68, "2/3 FFmpeg 字幕滤镜不可用，正在切换本地逐帧烧录")
+            render_engine = "pillow-fallback"
             ok = await asyncio.to_thread(burn_subtitles_with_pillow, source_path, output, cues, style)
         if not ok or not output.exists():
             raise RuntimeError("字幕烧录失败")
-    await _update_task(task, 92, "3/3 字幕烧录完成")
+    if progress_plan and len(progress_plan) > 1:
+        await _update_task(task, progress_plan[1][0], progress_plan[1][1])
+    if progress_plan and len(progress_plan) > 2:
+        await _update_task(task, progress_plan[2][0], progress_plan[2][1])
+    return {
+        "output": output,
+        "raw_cues": raw_cues,
+        "cues": cues,
+        "srt_text": srt_text,
+        "subtitle_style": style,
+        "subtitle_render_engine": render_engine,
+    }
+
+
+def render_subtitle_preview_png(
+    source_path: Path,
+    preview_text: str,
+    context: dict[str, Any],
+    *,
+    preview_ratio: float = 0.12,
+) -> bytes:
+    text = str(preview_text or "").strip()
+    style = subtitle_style_from_context(context, source_path)
+    duration = probe_duration(source_path) or 0.0
+    timestamp = max(0.0, min(1.0 if duration <= 0 else duration * preview_ratio, duration or 1.0))
+    with tempfile.TemporaryDirectory(prefix="ace_preview_") as temp_dir:
+        temp_path = Path(temp_dir)
+        output = temp_path / "preview.png"
+        try:
+            from PIL import Image
+        except Exception as exc:  # pragma: no cover - Pillow is already a hard dependency in practice
+            raise RuntimeError("生成字幕预览需要 Pillow。") from exc
+        frame_command = [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            f"{timestamp:.3f}",
+            "-i",
+            str(source_path),
+            "-frames:v",
+            "1",
+            str(output),
+        ]
+        process = subprocess.run(frame_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if process.returncode != 0 or not output.exists():
+            raise RuntimeError("字幕预览帧生成失败")
+        image = Image.open(output).convert("RGBA")
+        if text:
+            preview_line_limit = max(1, min(3, int(context.get("subtitle_line_limit") or context.get("line_limit") or 1)))
+            draw_subtitle_on_image(image, subtitle_entry_display_text(text, max_chars=999, max_lines=preview_line_limit), style)
+        preview = temp_path / "preview_rendered.png"
+        image.save(preview, format="PNG")
+        return preview.read_bytes()
+
+
+async def burn_subtitles_task(task: RenderTask) -> ToolResult:
+    context = dict(task.ai_context or {})
+    source_asset = task.source_asset
+    if not source_asset:
+        raise ValueError("缺少源视频")
+    source_path = Path(source_asset.file_path)
+    if not source_path.exists():
+        raise ValueError("源视频不存在")
+    subtitle_text = str(context.get("subtitle_text") or context.get("input_text") or "").strip()
+    if not subtitle_text:
+        raise ValueError("缺少字幕内容")
+    result = await burn_subtitle_video(
+        task,
+        source_path,
+        subtitle_text,
+        context,
+        output_prefix="subtitle_burn",
+        progress_plan=(
+            (18, "1/3 正在整理字幕内容"),
+            (45, "2/3 正在烧录字幕"),
+            (92, "3/3 字幕烧录完成"),
+        ),
+    )
     return ToolResult(
-        output,
-        f"/media/results/{output.name}",
+        result["output"],
+        f"/media/results/{result['output'].name}",
         "video",
         "字幕烧录",
         {
             "subtitle_text": subtitle_text,
-            "subtitle_srt": srt_text,
-            "original_subtitle_srt": cues_to_srt(raw_cues),
-            "subtitle_style": style,
+            "subtitle_srt": result["srt_text"],
+            "original_subtitle_srt": cues_to_srt(result["raw_cues"]),
+            "subtitle_style": result["subtitle_style"],
+            "subtitle_render_engine": result["subtitle_render_engine"],
             "overlap_policy": "latest-cue-wins",
         },
     )
@@ -628,90 +866,21 @@ async def video_transcription_task(task: RenderTask) -> ToolResult:
     source_path = Path(source_asset.file_path)
     if not source_path.exists():
         raise ValueError("源视频不存在")
-    provider_selection = str(context.get("provider") or context.get("provider_selection") or "env:aifox")
-    provider = await resolve_provider_config(
-        provider_selection,
-        user_id=task.user_id,
-        capability="asr",
-        base_url=str(context.get("base_url") or ""),
-        model=str(context.get("model") or ""),
-    )
-    provider_key = str(provider["provider_key"])
-    model = str(provider["model"])
-    base_url = str(provider["base_url"])
-    api_key = str(context.get("api_key") or provider["api_key"] or "")
-    endpoint = str(provider.get("endpoint") or "/v1/audio/transcriptions")
-    await _update_task(task, 15, "1/5 正在提取音频轨道")
-    with tempfile.TemporaryDirectory(prefix="ace_asr_") as temp_dir:
-        temp_path = Path(temp_dir)
-        audio_path = temp_path / "source.wav"
-        ok = await run_ffmpeg_command([
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(source_path),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "pcm_s16le",
-            str(audio_path),
-        ])
-        if not ok or not audio_path.exists():
-            raise RuntimeError("音频提取失败")
-        await _update_task(task, 35, "2/5 正在调用字幕转录模型")
-        transcript: dict[str, Any]
-        try:
-            if provider_key == "local_asr":
-                raise RuntimeError("用户选择本地 ASR")
-            transcript = await call_asr_provider(
-                audio_path,
-                base_url=base_url,
-                api_key=api_key,
-                model=model,
-                provider_key=provider_key,
-                endpoint=endpoint,
-                asr_context=str(context.get("asr_context") or ""),
-                hotwords=str(context.get("hotwords") or ""),
-            )
-            transcript["fallback_used"] = False
-        except Exception as exc:
-            fallback_stage = "3/5 正在使用本地 ASR 兜底" if provider_key == "local_asr" else "3/5 远程 ASR 不可用，正在切换本地兜底"
-            await _update_task(task, 58, fallback_stage)
-            transcript = await local_asr_transcribe(audio_path, source_path, reason=str(exc)[:500], task=task)
-        if not transcript.get("fallback_used"):
-            await _update_task(task, 72, "3/5 模型已返回，正在整理结果")
-        segments = transcript.get("segments") or []
-        txt_text = transcript.get("text") or transcript.get("transcript") or "\n".join(
-            segment.get("text", "") for segment in segments
-        )
-        if not segments and txt_text:
-            duration = probe_duration(source_path) or probe_duration(audio_path) or 0.0
-            segments = synthesize_segments_from_text(str(txt_text), duration)
-            transcript["segments"] = segments
-            transcript["timestamp_mode"] = "synthetic"
-        if not segments:
-            duration = probe_duration(source_path) or 0.0
-            segments = fallback_segments(duration, label="本地兜底字幕段")
-            transcript["segments"] = segments
-        await _update_task(task, 85, "5/5 正在整理字幕文件")
-        subtitle_words = transcript.get("words") if isinstance(transcript.get("words"), list) else None
-        subtitle_max_chars = dynamic_subtitle_max_chars(
-            source_path,
-            font_name=str(context.get("font_name") or "Alibaba PuHuiTi 2 55 Regular"),
-            font_size=int(context.get("font_size") or 42),
-            safe_area_percent=float(context.get("safe_area_percent") or 15),
-        )
-        srt_text = segments_to_srt(segments, words=subtitle_words, max_chars=subtitle_max_chars)
-        output = settings.media_path / "results" / f"transcript_{task.id}_{source_path.stem}.srt"
-        output.write_text(srt_text, encoding="utf-8")
-        txt_path = output.with_suffix(".txt")
-        txt_path.write_text(txt_text, encoding="utf-8")
-        json_path = output.with_suffix(".json")
-        json_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
-        await _update_task(task, 92, "5/5 字幕文件已生成")
+    assets = await build_video_subtitle_assets(task, context, source_path)
+    txt_text = str(assets["txt_text"] or "")
+    srt_text = str(assets["srt_text"] or "")
+    transcript = dict(assets["transcript"] or {})
+    model = str(assets["model"] or "")
+    provider_key = str(assets["provider_key"] or "")
+    subtitle_words = assets.get("subtitle_words") if isinstance(assets.get("subtitle_words"), list) else None
+    subtitle_max_chars = int(assets.get("subtitle_max_chars") or 22)
+    output = settings.media_path / "results" / f"transcript_{task.id}_{source_path.stem}.srt"
+    output.write_text(srt_text, encoding="utf-8")
+    txt_path = output.with_suffix(".txt")
+    txt_path.write_text(txt_text, encoding="utf-8")
+    json_path = output.with_suffix(".json")
+    json_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
+    await _update_task(task, 92, "5/5 字幕文件已生成")
     return ToolResult(
         output,
         f"/media/results/{output.name}",
@@ -730,6 +899,67 @@ async def video_transcription_task(task: RenderTask) -> ToolResult:
             "subtitle_max_chars": subtitle_max_chars,
             "asr_source": "fallback" if transcript.get("fallback_used") else "remote",
             "asr_source_label": asr_source_label(transcript, provider_key, model),
+        },
+    )
+
+
+async def auto_subtitle_burn_task(task: RenderTask) -> ToolResult:
+    context = dict(task.ai_context or {})
+    source_asset = task.source_asset
+    if not source_asset:
+        raise ValueError("缺少源视频")
+    source_path = Path(source_asset.file_path)
+    if not source_path.exists():
+        raise ValueError("源视频不存在")
+    assets = await build_video_subtitle_assets(task, context, source_path)
+    subtitle_srt = str(assets["srt_text"] or "")
+    transcript = dict(assets["transcript"] or {})
+    txt_text = str(assets["txt_text"] or "")
+    subtitle_max_chars = int(assets.get("subtitle_max_chars") or 22)
+    output_base = settings.media_path / "results" / f"auto_subtitle_{task.id}_{source_path.stem}"
+    srt_path = output_base.with_suffix(".srt")
+    srt_path.write_text(subtitle_srt, encoding="utf-8")
+    txt_path = output_base.with_suffix(".txt")
+    txt_path.write_text(txt_text, encoding="utf-8")
+    json_path = output_base.with_suffix(".json")
+    json_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
+    await _update_task(task, 92, "3/6 字幕稿已生成，正在应用字幕样式")
+    await _update_task(task, 94, "4/6 正在应用字幕样式并开始烧录")
+    burn_result = await burn_subtitle_video(
+        task,
+        source_path,
+        subtitle_srt,
+        context,
+        output_prefix="auto_subtitle_burn",
+        progress_plan=(
+            (96, "5/6 正在烧录字幕"),
+            (98, "6/6 字幕视频已生成，正在整理字幕文件"),
+            (99, "6/6 自动字幕烧录完成"),
+        ),
+    )
+    return ToolResult(
+        burn_result["output"],
+        f"/media/results/{burn_result['output'].name}",
+        "video",
+        "自动字幕烧录",
+        {
+            "subtitle_srt": subtitle_srt,
+            "subtitle_srt_url": f"/media/results/{srt_path.name}",
+            "subtitle_txt": f"/media/results/{txt_path.name}",
+            "subtitle_json": f"/media/results/{json_path.name}",
+            "transcript_text": txt_text,
+            "subtitle_style": burn_result["subtitle_style"],
+            "subtitle_render_engine": burn_result["subtitle_render_engine"],
+            "subtitle_max_chars": subtitle_max_chars,
+            "provider": assets["provider_key"],
+            "model": assets["model"],
+            "fallback_used": assets["fallback_used"],
+            "fallback_reason": assets["fallback_reason"],
+            "timestamp_mode": assets["timestamp_mode"],
+            "subtitle_splitter": assets["subtitle_splitter"],
+            "asr_source": assets["asr_source"],
+            "asr_source_label": assets["asr_source_label"],
+            "overlap_policy": "latest-cue-wins",
         },
     )
 
@@ -1134,6 +1364,236 @@ async def call_qwen_asr_provider(audio_path: Path, *, base_url: str, api_key: st
         "raw": data,
         "timestamp_mode": "none",
     }
+
+
+async def retranscribe_fun_asr_long_audio(
+    audio_path: Path,
+    *,
+    seed_transcript: dict[str, Any],
+    base_url: str,
+    api_key: str,
+    model: str,
+    provider_key: str,
+    endpoint: str,
+    asr_context: str,
+    hotwords: str,
+    duration: float,
+    task: RenderTask | None = None,
+) -> dict[str, Any]:
+    seed_words = extract_fun_asr_words(seed_transcript)
+    if not seed_words:
+        return {
+            **seed_transcript,
+            "subtitle_splitter": "fun-asr-single-pass",
+            "long_audio_split": {"enabled": False, "reason": "missing_word_timestamps"},
+        }
+    split_points = find_fun_asr_split_points(seed_words, duration)
+    if len(split_points) <= 2:
+        return {
+            **seed_transcript,
+            "subtitle_splitter": "fun-asr-single-pass",
+            "long_audio_split": {
+                "enabled": False,
+                "duration": round(duration, 3),
+                "split_points": split_points,
+            },
+        }
+
+    merged_segments: list[dict[str, Any]] = []
+    merged_words: list[dict[str, Any]] = []
+    merged_text_parts: list[str] = []
+    chunk_summaries: list[dict[str, Any]] = []
+    sentence_offset = 0
+    total_chunks = len(split_points) - 1
+
+    with tempfile.TemporaryDirectory(prefix="ace_fun_asr_split_") as temp_dir:
+        temp_path = Path(temp_dir)
+        for index, (start, end) in enumerate(zip(split_points[:-1], split_points[1:]), start=1):
+            if task:
+                await _update_task(task, min(78, 50 + index), f"2/5 Fun-ASR 分段重识别 ({index}/{total_chunks})")
+            chunk_path = temp_path / f"chunk_{index}.wav"
+            ok = await run_ffmpeg_command([
+                "ffmpeg",
+                "-y",
+                "-ss",
+                f"{start:.3f}",
+                "-to",
+                f"{end:.3f}",
+                "-i",
+                str(audio_path),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_s16le",
+                str(chunk_path),
+            ])
+            if not ok or not chunk_path.exists():
+                raise RuntimeError("Fun-ASR 长音频分段失败")
+            chunk_transcript = await call_fun_asr_provider(
+                chunk_path,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                asr_context=asr_context,
+                hotwords=hotwords,
+            )
+            chunk_transcript["fallback_used"] = False
+            offset_transcript(chunk_transcript, offset=start, sentence_offset=sentence_offset)
+            chunk_words = extract_fun_asr_words(chunk_transcript)
+            chunk_segments = extract_fun_asr_segments(chunk_transcript)
+            merged_words.extend(chunk_words)
+            merged_segments.extend(chunk_segments)
+            merged_text_parts.append(str(chunk_transcript.get("text") or "").strip())
+            local_sentence_ids = [int(item.get("sentence_id") or 0) for item in chunk_words]
+            sentence_offset += (max(local_sentence_ids) + 1) if local_sentence_ids else 1
+            chunk_summaries.append(
+                {
+                    "index": index,
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "duration": round(max(0.0, end - start), 3),
+                    "word_count": len(chunk_words),
+                    "segment_count": len(chunk_segments),
+                }
+            )
+
+    merged_words = _dedupe_asr_rows(sorted(merged_words, key=lambda item: (int(item.get("sentence_id") or 0), float(item.get("start") or 0))))
+    merged_segments = _dedupe_asr_rows(sorted(merged_segments, key=lambda item: float(item.get("start") or 0)))
+    return {
+        **seed_transcript,
+        "text": "\n".join(part for part in merged_text_parts if part).strip() or str(seed_transcript.get("text") or "").strip(),
+        "segments": merged_segments or list(seed_transcript.get("segments") or []),
+        "words": merged_words,
+        "timestamp_mode": "fun-asr",
+        "subtitle_splitter": "fun-asr-long-audio-word-boundary-jieba-rules",
+        "long_audio_split": {
+            "enabled": True,
+            "duration": round(duration, 3),
+            "threshold": FUN_ASR_LONG_AUDIO_THRESHOLD_SECONDS,
+            "target_chunk_seconds": FUN_ASR_TARGET_CHUNK_SECONDS,
+            "split_window_seconds": FUN_ASR_SPLIT_WINDOW_SECONDS,
+            "split_points": split_points,
+            "chunks": chunk_summaries,
+        },
+    }
+
+
+def offset_transcript(transcript: dict[str, Any], *, offset: float, sentence_offset: int = 0) -> dict[str, Any]:
+    if not transcript:
+        return transcript
+    segments = transcript.get("segments")
+    if isinstance(segments, list):
+        shifted_segments: list[dict[str, Any]] = []
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            start = float(segment.get("start") or 0) + offset
+            end = float(segment.get("end") or start) + offset
+            shifted_segments.append({**segment, "start": round(start, 3), "end": round(max(start + 0.05, end), 3)})
+        transcript["segments"] = shifted_segments
+    words = transcript.get("words")
+    if isinstance(words, list):
+        shifted_words: list[dict[str, Any]] = []
+        for word in words:
+            if not isinstance(word, dict):
+                continue
+            start = float(word.get("start") or 0) + offset
+            end = float(word.get("end") or start) + offset
+            shifted_words.append(
+                {
+                    **word,
+                    "start": round(start, 3),
+                    "end": round(max(start + 0.05, end), 3),
+                    "sentence_id": int(word.get("sentence_id") or 0) + sentence_offset,
+                }
+            )
+        transcript["words"] = shifted_words
+    transcript["timestamp_mode"] = str(transcript.get("timestamp_mode") or "fun-asr")
+    return transcript
+
+
+def find_fun_asr_split_points(words: list[dict[str, Any]], duration: float) -> list[float]:
+    ordered = sorted(
+        [
+            {
+                "text": str(item.get("text") or "").strip(),
+                "start": round(float(item.get("start") or 0), 3),
+                "end": round(max(float(item.get("start") or 0) + 0.05, float(item.get("end") or item.get("start") or 0)), 3),
+            }
+            for item in words
+            if str(item.get("text") or "").strip()
+        ],
+        key=lambda item: (item["start"], item["end"]),
+    )
+    if duration <= FUN_ASR_LONG_AUDIO_THRESHOLD_SECONDS or len(ordered) < 2:
+        return [0.0, round(max(duration, 0.0), 3)]
+
+    split_points = [0.0]
+    cursor = 0.0
+    while cursor + FUN_ASR_TARGET_CHUNK_SECONDS < duration:
+        target = min(duration, cursor + FUN_ASR_TARGET_CHUNK_SECONDS)
+        candidates: list[tuple[float, float]] = []
+        for index in range(1, len(ordered)):
+            left = ordered[index - 1]
+            right = ordered[index]
+            boundary = round(max(left["end"], right["start"]), 3)
+            if boundary <= cursor + FUN_ASR_MIN_CHUNK_SECONDS:
+                continue
+            if boundary >= duration - FUN_ASR_MIN_CHUNK_SECONDS:
+                break
+            distance = abs(boundary - target)
+            if distance > FUN_ASR_SPLIT_WINDOW_SECONDS:
+                continue
+            gap = max(0.0, right["start"] - left["end"])
+            bonus = 0.0
+            if left["text"].endswith(tuple(SENTENCE_END_PUNCTUATION)) or left["text"].endswith(tuple(SUBTITLE_PUNCTUATION)):
+                bonus += 2.0
+            if right["text"].startswith(tuple(SUBTITLE_PUNCTUATION)):
+                bonus += 1.0
+            score = -distance * 12.0 + min(gap, 1.5) * 4.0 + bonus
+            candidates.append((score, boundary))
+        if not candidates:
+            for index in range(1, len(ordered)):
+                left = ordered[index - 1]
+                right = ordered[index]
+                boundary = round(max(left["end"], right["start"]), 3)
+                if boundary <= cursor + FUN_ASR_MIN_CHUNK_SECONDS:
+                    continue
+                if boundary >= duration - FUN_ASR_MIN_CHUNK_SECONDS:
+                    break
+                distance = abs(boundary - target)
+                gap = max(0.0, right["start"] - left["end"])
+                score = -distance * 8.0 + min(gap, 1.5) * 2.0
+                candidates.append((score, boundary))
+        if not candidates:
+            break
+        _, boundary = max(candidates, key=lambda item: (item[0], item[1]))
+        boundary = round(boundary, 3)
+        if boundary <= cursor + FUN_ASR_MIN_CHUNK_SECONDS:
+            break
+        split_points.append(boundary)
+        cursor = boundary
+
+    if split_points[-1] < duration:
+        split_points.append(round(duration, 3))
+    return _dedupe_split_points(split_points)
+
+
+def _dedupe_split_points(points: list[float]) -> list[float]:
+    cleaned: list[float] = []
+    for value in points:
+        value = round(max(0.0, float(value)), 3)
+        if cleaned and abs(cleaned[-1] - value) < 0.05:
+            continue
+        cleaned.append(value)
+    if cleaned and cleaned[0] != 0.0:
+        cleaned.insert(0, 0.0)
+    if len(cleaned) == 1:
+        cleaned.append(cleaned[0])
+    return cleaned
 
 
 def video_generation_endpoint(base_url: str) -> str:
@@ -1580,7 +2040,33 @@ def extract_fun_asr_text(data: dict[str, Any]) -> str:
     return extract_chat_content_text(data)
 
 
+def _dedupe_asr_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for item in rows:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        start = round(float(item.get("start") or 0), 3)
+        end = round(float(item.get("end") or start), 3)
+        sentence_id = int(item.get("sentence_id") or 0)
+        key = (text, start, end, sentence_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({**item, "text": text, "start": start, "end": end, "sentence_id": sentence_id})
+    return deduped
+
+
 def extract_fun_asr_segments(data: dict[str, Any]) -> list[dict[str, Any]]:
+    for value in (data, data.get("output") if isinstance(data, dict) else None, data.get("result") if isinstance(data, dict) else None):
+        if not isinstance(value, dict):
+            continue
+        rows = value.get("segments") or value.get("sentences") or value.get("sentence")
+        if isinstance(rows, list) and rows:
+            segments = _dedupe_asr_rows([normalize_asr_segment(item) for item in rows if isinstance(item, dict)])
+            if segments:
+                return [strip_internal_asr_fields(item) for item in sorted(segments, key=lambda item: float(item.get("start") or 0))]
     candidates: list[dict[str, Any]] = []
     for value in walk_json_values(data):
         if not isinstance(value, dict):
@@ -1589,15 +2075,45 @@ def extract_fun_asr_segments(data: dict[str, Any]) -> list[dict[str, Any]]:
             rows = value.get(key)
             if isinstance(rows, list):
                 candidates.extend(item for item in rows if isinstance(item, dict))
-    segments = [normalize_asr_segment(item) for item in candidates]
-    segments = [item for item in segments if item["text"]]
+    segments = _dedupe_asr_rows([normalize_asr_segment(item) for item in candidates])
     if segments:
-        return sorted(segments, key=lambda item: float(item.get("start") or 0))
+        return [strip_internal_asr_fields(item) for item in sorted(segments, key=lambda item: float(item.get("start") or 0))]
     word_segments = extract_fun_asr_word_segments(data)
-    return merge_tiny_asr_segments(word_segments)
+    return [strip_internal_asr_fields(item) for item in merge_tiny_asr_segments(word_segments)]
 
 
 def extract_fun_asr_words(data: dict[str, Any]) -> list[dict[str, Any]]:
+    for value in (data, data.get("output") if isinstance(data, dict) else None, data.get("result") if isinstance(data, dict) else None):
+        if not isinstance(value, dict):
+            continue
+        rows = value.get("words") or value.get("word")
+        if isinstance(rows, list) and rows:
+            words: list[dict[str, Any]] = []
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text") or item.get("word") or "").strip()
+                if not text:
+                    continue
+                word_start = asr_time_to_seconds(
+                    item.get("start_time") or item.get("begin_time") or item.get("start") or item.get("begin"),
+                    assume_ms=bool(item.get("start_time") is not None or item.get("begin_time") is not None),
+                )
+                word_end = asr_time_to_seconds(
+                    item.get("end_time") or item.get("end"),
+                    assume_ms=item.get("end_time") is not None,
+                )
+                words.append(
+                    {
+                        "text": text,
+                        "start": round(word_start, 3),
+                        "end": round(max(word_start + 0.05, word_end), 3),
+                        "sentence_id": int(item.get("sentence_id") or value.get("sentence_id") or 0),
+                    }
+                )
+            words = _dedupe_asr_rows(words)
+            if words:
+                return sorted(words, key=lambda item: (int(item.get("sentence_id") or 0), float(item.get("start") or 0)))
     words: list[dict[str, Any]] = []
     sentence_index = 0
     for value in walk_json_values(data):
@@ -1633,17 +2149,12 @@ def extract_fun_asr_words(data: dict[str, Any]) -> list[dict[str, Any]]:
                     "sentence_id": int(sentence_id or 0),
                 }
             )
+    words = _dedupe_asr_rows(words)
     return sorted(words, key=lambda item: (int(item.get("sentence_id") or 0), float(item.get("start") or 0)))
 
 
 def extract_fun_asr_word_segments(data: dict[str, Any]) -> list[dict[str, Any]]:
-    words: list[dict[str, Any]] = []
-    for value in walk_json_values(data):
-        if not isinstance(value, dict):
-            continue
-        rows = value.get("words") or value.get("word")
-        if isinstance(rows, list):
-            words.extend(item for item in rows if isinstance(item, dict))
+    words = extract_fun_asr_words(data)
     segments: list[dict[str, Any]] = []
     buffer: list[str] = []
     start: float | None = None
@@ -1673,6 +2184,14 @@ def normalize_asr_segment(item: dict[str, Any]) -> dict[str, Any]:
     start = asr_time_to_seconds(item.get("start_time") or item.get("begin_time") or item.get("start") or item.get("begin"), assume_ms=bool(item.get("start_time") is not None or item.get("begin_time") is not None))
     end = asr_time_to_seconds(item.get("end_time") or item.get("end"), assume_ms=item.get("end_time") is not None)
     return {"start": round(start, 3), "end": round(max(start + 0.4, end), 3), "text": text}
+
+
+def strip_internal_asr_fields(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "start": round(float(item.get("start") or 0), 3),
+        "end": round(float(item.get("end") or 0), 3),
+        "text": str(item.get("text") or "").strip(),
+    }
 
 
 def asr_time_to_seconds(value: Any, *, assume_ms: bool = False) -> float:
@@ -1988,6 +2507,34 @@ def normalize_subtitle_overlaps(cues: list[dict[str, Any]]) -> list[dict[str, An
     return normalized
 
 
+def reflow_subtitle_cues_for_line_limit(
+    cues: list[dict[str, Any]],
+    source_path: Path,
+    style: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not cues:
+        return []
+    line_limit = max(1, int(style.get("line_limit") or 1))
+    base_max_chars = dynamic_subtitle_max_chars(
+        source_path,
+        font_name=str(style.get("font_name") or "Alibaba PuHuiTi 2 55 Regular"),
+        font_size=int(style.get("font_size") or 42),
+        safe_area_percent=float(style.get("safe_x_percent") or style.get("safe_area_percent") or 15),
+    )
+    cfg = SubtitleSplitConfig(
+        max_chars=max(12, base_max_chars),
+        max_lines=line_limit,
+        safe_area_percent=float(style.get("safe_x_percent") or style.get("safe_area_percent") or 15),
+        min_time=0.0,
+        gap_max_extend=0.0,
+    )
+    needs_reflow = any("\n" in str(item.get("text") or "") or display_len(str(item.get("text") or "")) > cfg.max_chars_per_entry for item in cues)
+    if not needs_reflow:
+        return normalize_subtitle_overlaps(cues)
+    reflowed = build_semantic_subtitle_segments(cues, config=cfg)
+    return normalize_subtitle_overlaps(reflowed or cues)
+
+
 def fallback_segments(duration: float, count: int = 5, label: str = "字幕段") -> list[dict[str, Any]]:
     if duration <= 0:
         duration = float(count) * 2.5
@@ -2034,17 +2581,18 @@ def synthesize_segments_from_text(text: str, duration: float) -> list[dict[str, 
 @dataclass(slots=True)
 class SubtitleSplitConfig:
     max_chars: int = 22
+    max_lines: int = 1
     safe_area_percent: float = 15.0
     min_time: float = 1.5
     gap_max_extend: float = 1.0
 
     @property
     def max_chars_per_entry(self) -> int:
-        return self.max_chars
+        return max(1, self.max_chars) * max(1, self.max_lines)
 
     @property
     def merge_limit(self) -> int:
-        return self.max_chars
+        return self.max_chars_per_entry
 
 
 def segments_to_srt(
@@ -2052,14 +2600,15 @@ def segments_to_srt(
     *,
     words: list[dict[str, Any]] | None = None,
     max_chars: int = 22,
+    max_lines: int = 1,
 ) -> str:
     entries = build_semantic_subtitle_segments(
         segments,
         words=words,
-        config=SubtitleSplitConfig(max_chars=max_chars),
+        config=SubtitleSplitConfig(max_chars=max_chars, max_lines=max_lines),
     )
     return "\n\n".join(
-        f"{index}\n{seconds_to_timecode(float(item.get('start') or 0))} --> {seconds_to_timecode(float(item.get('end') or 0))}\n{subtitle_display_text(str(item.get('text') or '').strip())}"
+        f"{index}\n{seconds_to_timecode(float(item.get('start') or 0))} --> {seconds_to_timecode(float(item.get('end') or 0))}\n{subtitle_entry_display_text(str(item.get('text') or '').strip(), max_chars=max_chars, max_lines=max_lines)}"
         for index, item in enumerate(entries, start=1)
     )
 
@@ -2304,10 +2853,10 @@ def split_entry_recursive(entry: dict[str, Any], cfg: SubtitleSplitConfig, *, so
 
 def choose_semantic_cut(words: list[dict[str, Any]], cfg: SubtitleSplitConfig, *, soft: bool) -> int:
     total_len = display_len(join_subtitle_words(words))
-    target = min(cfg.max_chars, max(2, total_len // 2))
+    target = min(cfg.max_chars_per_entry, max(2, total_len // 2))
     best_index = 0
     best_score = -10_000
-    limit = cfg.max_chars
+    limit = cfg.max_chars_per_entry
     for index in range(1, len(words)):
         left_text = join_subtitle_words(words[:index])
         right_text = join_subtitle_words(words[index:])
@@ -2333,7 +2882,7 @@ def semantic_boundary_score(words: list[dict[str, Any]], index: int, target: int
     pair = prev_text + next_text
     if pair in COMPOUND_WORDS or any(pair in item for item in COMPOUND_WORDS):
         score -= 20
-    if prev_pos.startswith("d") and (next_pos[0:1] in VERB_POS or next_pos[0:1] in ADJ_POS):
+    if (prev_pos.startswith("d") or prev_text in ADVERBIAL_WORDS) and (next_pos[0:1] in VERB_POS or next_pos[0:1] in ADJ_POS):
         score -= 15
     if next_pos[0:1] in PARTICLE_POS or next_text in {"的", "了", "着", "过"}:
         score -= 15
@@ -2376,6 +2925,7 @@ def apply_boundary_rule(left: dict[str, Any], right: dict[str, Any], cfg: Subtit
         return False
     a = clean_word_text(str(left_words[-1].get("text") or ""))
     b = clean_word_text(str(right_words[0].get("text") or ""))
+    c = clean_word_text(str(right_words[1].get("text") or "")) if len(right_words) > 1 else ""
     a_pos = word_pos(a)
     b_pos = word_pos(b)
     combined_text = str(left.get("text") or "") + str(right.get("text") or "")
@@ -2387,11 +2937,11 @@ def apply_boundary_rule(left: dict[str, Any], right: dict[str, Any], cfg: Subtit
         return True
     if a in NEGATIONS:
         return move_last_word(left, right, cfg)
-    if a in MODALS and b == "不":
-        return move_first_word(right, left, cfg)
+    if a in MODALS and b in NEGATIONS:
+        return move_first_word(right, left, cfg) or move_last_word(left, right, cfg)
     if a in PREPOSITIONS:
         return move_first_word(right, left, cfg) or move_last_word(left, right, cfg)
-    if a_pos.startswith("d") and b_pos.startswith("v"):
+    if (a_pos.startswith("d") or a in ADVERBIAL_WORDS) and (b_pos[0:1] in VERB_POS or b_pos.startswith("v")):
         return move_first_word(right, left, cfg) or move_last_word(left, right, cfg)
     if a_pos[0:1] in ADJ_POS and b_pos[0:1] in NOUN_POS:
         return move_first_word(right, left, cfg) or move_last_word(left, right, cfg)
@@ -2399,7 +2949,7 @@ def apply_boundary_rule(left: dict[str, Any], right: dict[str, Any], cfg: Subtit
         return move_first_word(right, left, cfg) or move_last_word(left, right, cfg)
     if a_pos.startswith("v") and b_pos[0:1] in NOUN_POS and b not in PRONOUNS and b not in COMPLEMENT_STARTS:
         return move_first_word(right, left, cfg) or move_last_word(left, right, cfg)
-    if b in COMPLEMENT_STARTS:
+    if b in COMPLEMENT_STARTS or (b == "不" and c and (b + c) in COMPLEMENT_STARTS):
         return move_first_word(right, left, cfg) or move_last_word(left, right, cfg)
     if is_number_like(a) and is_measure_word(b):
         return move_first_word(right, left, cfg) or move_last_word(left, right, cfg)
@@ -2461,6 +3011,11 @@ def apply_min_display_time(entries: list[dict[str, Any]], cfg: SubtitleSplitConf
 
 def subtitle_display_text(text: str) -> str:
     return re.sub(r"\s+", "", text).strip()
+
+
+def subtitle_entry_display_text(text: str, *, max_chars: int = 22, max_lines: int = 1) -> str:
+    cleaned = subtitle_display_text(text)
+    return cleaned.replace("\n", "")
 
 
 def hard_cut_index(words: list[dict[str, Any]], max_chars: int) -> int:
@@ -2541,7 +3096,7 @@ def dynamic_subtitle_max_chars(
     width, _height = probe_video_size(source_path)
     if width <= 0:
         width = 1080
-    safe = max(0.0, min(30.0, float(safe_area_percent or 15.0)))
+    safe = max(0.0, min(45.0, float(safe_area_percent or 15.0)))
     usable_width = width * max(0.3, 1 - safe * 2 / 100)
     avg_char_width = average_font_char_width(font_name, font_size)
     return max(12, min(32, int(usable_width // max(1.0, avg_char_width))))
@@ -2658,16 +3213,18 @@ def escape_concat_path(path: Path) -> str:
 
 def subtitle_style_from_context(context: dict[str, Any], source_path: Path) -> dict[str, Any]:
     width, height = probe_video_size(source_path)
-    safe_x = clamp_float(context.get("safe_x_percent"), 0, 30, 10)
+    safe_x = clamp_float(context.get("safe_x_percent"), 0, 50, 10)
+    vertical_position_percent = _resolve_vertical_position_percent(context, height)
     return {
         "font_name": str(context.get("font_name") or "Microsoft YaHei"),
-        "font_size": clamp_int(context.get("font_size"), 16, 96, 42),
+        "font_size": clamp_int(context.get("font_size"), 16, 240, 42),
         "font_color": normalize_hex_color(str(context.get("font_color") or "#ffffff")),
         "safe_x_percent": safe_x,
-        "bottom_margin": clamp_int(context.get("bottom_margin"), 0, 360, 96),
-        "outline": clamp_int(context.get("outline"), 0, 12, 3),
-        "shadow": clamp_int(context.get("shadow"), 0, 12, 1),
-        "line_height": clamp_float(context.get("line_height"), 0.9, 2.0, 1.15),
+        "vertical_position_percent": vertical_position_percent,
+        "outline": clamp_int(context.get("outline"), 0, 40, 3),
+        "shadow": clamp_int(context.get("shadow"), 0, 40, 1),
+        "line_height": clamp_float(context.get("line_height"), 0.8, 4.0, 1.15),
+        "line_limit": max(1, min(3, int(context.get("line_limit") or context.get("subtitle_line_limit") or 1))),
         "alignment": str(context.get("alignment") or "bottom-center"),
         "background": str(context.get("background") or "soft"),
         "video_width": width,
@@ -2675,6 +3232,22 @@ def subtitle_style_from_context(context: dict[str, Any], source_path: Path) -> d
         "margin_left": max(0, round(width * safe_x / 100)),
         "margin_right": max(0, round(width * safe_x / 100)),
     }
+
+
+def _resolve_vertical_position_percent(context: dict[str, Any], video_height: int) -> float:
+    value = context.get("vertical_position_percent")
+    if value is None:
+        bottom_margin = context.get("bottom_margin")
+        if bottom_margin is not None:
+            try:
+                bottom_margin_value = float(bottom_margin)
+            except Exception:
+                bottom_margin_value = 10.0
+            if video_height > 0:
+                value = bottom_margin_value / max(1.0, float(video_height)) * 100
+            else:
+                value = bottom_margin_value
+    return clamp_float(value, 0, 100, 10)
 
 
 def style_to_force_style(style: dict[str, Any]) -> str:
@@ -2687,8 +3260,10 @@ def style_to_force_style(style: dict[str, Any]) -> str:
         "top-right": 9,
     }
     background = style.get("background", "soft")
-    outline = int(style.get("outline", 3))
-    shadow = int(style.get("shadow", 1))
+    outline = clamp_int(style.get("outline"), 0, 40, 3)
+    shadow = clamp_int(style.get("shadow"), 0, 40, 1)
+    video_height = max(1, int(style.get("video_height") or 1920))
+    vertical_position_percent = max(0.0, min(100.0, float(style.get("vertical_position_percent") or 10)))
     border_style = 3 if background != "none" else 1
     back_colour = "&H66000000" if background == "soft" else "&H99000000" if background == "solid" else "&H00000000"
     return ",".join(
@@ -2704,7 +3279,7 @@ def style_to_force_style(style: dict[str, Any]) -> str:
             f"Alignment={align_map.get(style.get('alignment'), 2)}",
             f"MarginL={int(style.get('margin_left', 96))}",
             f"MarginR={int(style.get('margin_right', 96))}",
-            f"MarginV={int(style.get('bottom_margin', 96))}",
+            f"MarginV={int(round(video_height * vertical_position_percent / 100))}",
         ]
     )
 
@@ -2805,12 +3380,12 @@ def draw_subtitle_on_image(image: Any, text: str, style: dict[str, Any]) -> None
     from PIL import ImageDraw
 
     width, height = image.size
-    font_size = int(style.get("font_size") or 42)
-    outline = max(0, int(style.get("outline") or 0))
-    shadow = max(0, int(style.get("shadow") or 0))
-    safe_x = max(0, min(30, float(style.get("safe_x_percent") or 10)))
-    bottom_margin = max(0, int(style.get("bottom_margin") or 96))
-    line_height = max(0.9, min(2.0, float(style.get("line_height") or 1.15)))
+    font_size = max(16, min(240, int(style.get("font_size") or 42)))
+    outline = max(0, min(40, int(style.get("outline") or 0)))
+    shadow = max(0, min(40, int(style.get("shadow") or 0)))
+    safe_x = max(0, min(50, float(style.get("safe_x_percent") or 10)))
+    vertical_position_percent = max(0.0, min(100.0, float(style.get("vertical_position_percent") or 10)))
+    line_height = max(0.8, min(4.0, float(style.get("line_height") or 1.15)))
     background = str(style.get("background") or "soft")
     alignment = str(style.get("alignment") or "bottom-center")
     font = load_subtitle_font(str(style.get("font_name") or ""), font_size)
@@ -2818,7 +3393,8 @@ def draw_subtitle_on_image(image: Any, text: str, style: dict[str, Any]) -> None
     max_width = max(40, int(width * (1 - safe_x * 2 / 100)))
     padding_x = 0 if background == "none" else max(10, int(font_size * 0.5))
     padding_y = 0 if background == "none" else max(6, int(font_size * 0.3))
-    lines = wrap_pil_text(draw, text, font, max_width - padding_x * 2, outline)
+    max_lines = max(1, min(3, int(style.get("line_limit") or 1)))
+    lines = wrap_pil_text(draw, text, font, max_width - padding_x * 2, outline, max_lines=max_lines)
     line_gap = max(0, int(font_size * max(0, line_height - 1)))
     metrics: list[tuple[str, int, int]] = []
     block_width = 1
@@ -2840,7 +3416,8 @@ def draw_subtitle_on_image(image: Any, text: str, style: dict[str, Any]) -> None
     else:
         block_x = (width - block_width) // 2
         text_align = "center"
-    block_y = bottom_margin if alignment.startswith("top") else height - bottom_margin - block_height
+    free_height = max(0, height - block_height)
+    block_y = int(round(free_height * (1 - vertical_position_percent / 100)))
     block_x = max(0, min(width - block_width, block_x))
     block_y = max(0, min(height - block_height, block_y))
     if background != "none":
@@ -2907,10 +3484,13 @@ def normalize_font_token(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
 
 
-def wrap_pil_text(draw: Any, text: str, font: Any, max_width: int, stroke_width: int = 0) -> list[str]:
+def wrap_pil_text(draw: Any, text: str, font: Any, max_width: int, stroke_width: int = 0, *, max_lines: int = 2) -> list[str]:
     raw_lines = [line.strip() for line in text.replace("\r", "\n").split("\n") if line.strip()] or [""]
     lines: list[str] = []
     for raw in raw_lines[:8]:
+        if max_lines <= 1:
+            lines.append(raw)
+            continue
         current = ""
         for char in raw:
             candidate = current + char
@@ -2922,7 +3502,7 @@ def wrap_pil_text(draw: Any, text: str, font: Any, max_width: int, stroke_width:
                 current = candidate
         if current:
             lines.append(current)
-    return lines[:12] or [text.strip()]
+    return lines[: max(1, max_lines * 4)] or [text.strip()]
 
 
 def pil_rgba_color(color: str, alpha: int = 255) -> tuple[int, int, int, int]:

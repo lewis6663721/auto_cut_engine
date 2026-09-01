@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from app.core.web import render, view_context
 from app.services.templates import parse_dimension_form
 from auth import require_admin
-from models import Template
+from models import AiProviderCredential, RenderTask, Template, User
 from render_engine.dimension_registry import default_template_config, normalize_config, seed_dimensions
 
 
@@ -18,6 +18,27 @@ async def admin_home(request: Request):
     await require_admin(request)
     template_list = await Template.all()
     return render(request, "admin.html", **await view_context(request, templates=template_list))
+
+
+@router.get("/admin/users", response_class=HTMLResponse)
+async def admin_users(request: Request):
+    await require_admin(request)
+    users = await User.all().order_by("-is_admin", "username")
+    rows = []
+    for user in users:
+        task_count = await RenderTask.filter(user=user).count()
+        provider_count = await AiProviderCredential.filter(user=user).count()
+        rows.append(
+            {
+                "id": user.id,
+                "username": user.username,
+                "is_admin": user.is_admin,
+                "created_at": user.created_at,
+                "task_count": task_count,
+                "provider_count": provider_count,
+            }
+        )
+    return render(request, "admin_users.html", **await view_context(request, users=rows))
 
 
 @router.get("/admin/template/new", response_class=HTMLResponse)

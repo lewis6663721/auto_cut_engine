@@ -961,6 +961,7 @@ async def test_burn_subtitles_tool_page_has_preview_controls(client):
     assert "safe_x_percent" in response.text
     assert "bottom_margin" in response.text
     assert "line_height" in response.text
+    assert "line_limit" in response.text
     assert "data-step-target" in response.text
 
     css = await client.get("/static/css/app.css")
@@ -994,6 +995,7 @@ async def test_burn_subtitles_uses_reviewed_text_over_uploaded_file(client, tmp_
             "subtitles": "1\n00:00:00,000 --> 00:00:02,000\n审核后字幕",
             "review_confirmed": "1",
             "font_name": "Alibaba PuHuiTi 2 95 ExtraBold",
+            "line_limit": "1",
         },
         files={
             "video": ("source.mp4", BytesIO(b"video"), "video/mp4"),
@@ -1008,6 +1010,7 @@ async def test_burn_subtitles_uses_reviewed_text_over_uploaded_file(client, tmp_
     assert captured["applied_config"]["subtitle_source"] == "edited_text"
     assert captured["applied_config"]["review_confirmed"] is True
     assert captured["applied_config"]["subtitle_style"]["font_name"] == "Alibaba PuHuiTi 2 95 ExtraBold"
+    assert captured["applied_config"]["subtitle_style"]["line_limit"] == 1
 
 
 @pytest.mark.asyncio
